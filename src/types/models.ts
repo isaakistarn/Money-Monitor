@@ -120,6 +120,8 @@ export interface Holding extends Synced {
   name: string
   /** Ticker / short symbol, e.g. AAPL, BTC, XAU. */
   symbol?: string
+  /** Exchange for price lookups, e.g. ASX, NASDAQ, NYSE. Blank = let the provider decide. */
+  exchange?: string
   type: HoldingType
   /** Units/shares held (may be fractional). */
   quantity: number

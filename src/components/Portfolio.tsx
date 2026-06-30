@@ -28,6 +28,7 @@ interface Draft {
   id?: string
   name: string
   symbol: string
+  exchange: string
   type: HoldingType
   quantity: string
   price: string
@@ -36,7 +37,7 @@ interface Draft {
 }
 
 function emptyDraft(): Draft {
-  return { name: '', symbol: '', type: 'stock', quantity: '', price: '', cost: '', note: '' }
+  return { name: '', symbol: '', exchange: '', type: 'stock', quantity: '', price: '', cost: '', note: '' }
 }
 
 function Gain({ minor, pct }: { minor?: number; pct?: number }) {
@@ -74,13 +75,12 @@ export function Portfolio() {
   const withSymbols = list.filter((h) => h.symbol)
 
   const refreshPrices = async () => {
-    const apikey = await getMeta<string>('alphaVantageKey', '')
-    if (!apikey) return toast('Add your Alpha Vantage key in Settings → Live prices.', 'error')
+    const apikey = await getMeta<string>('twelveDataKey', '')
+    if (!apikey) return toast('Add your Twelve Data key in Settings → Live prices.', 'error')
     if (withSymbols.length === 0) return toast('Add ticker symbols to your holdings first.', 'error')
-    const quoteCurrency = await getMeta<string>('quoteCurrency', 'USD')
     setRefreshing(true)
     try {
-      const res = await refreshHoldingPrices(withSymbols, { apikey, quoteCurrency, appCurrency: currency })
+      const res = await refreshHoldingPrices(withSymbols, { apikey, appCurrency: currency })
       if (res.updated > 0) {
         toast(
           `Updated ${res.updated} price${res.updated === 1 ? '' : 's'}` +
@@ -106,7 +106,7 @@ export function Portfolio() {
     setDraft(
       h
         ? {
-            id: h.id, name: h.name, symbol: h.symbol ?? '', type: h.type,
+            id: h.id, name: h.name, symbol: h.symbol ?? '', exchange: h.exchange ?? '', type: h.type,
             quantity: String(h.quantity), price: minorToInput(h.unitPriceMinor, currency),
             cost: h.costBasisMinor != null ? minorToInput(h.costBasisMinor, currency) : '', note: h.note ?? '',
           }
@@ -128,6 +128,7 @@ export function Portfolio() {
     const payload = {
       name: draft.name.trim(),
       symbol: draft.symbol.trim().toUpperCase() || undefined,
+      exchange: draft.exchange.trim().toUpperCase() || undefined,
       type: draft.type,
       quantity,
       unitPriceMinor,
@@ -252,13 +253,20 @@ export function Portfolio() {
                 <Input value={draft.symbol} onChange={(e) => setDraft({ ...draft, symbol: e.target.value })} placeholder="AAPL" maxLength={12} />
               </Field>
             </div>
-            <Field label="Type">
-              <Select value={draft.type} onChange={(e) => setDraft({ ...draft, type: e.target.value as HoldingType })}>
-                {(Object.keys(TYPE_LABELS) as HoldingType[]).map((t) => (
-                  <option key={t} value={t}>{TYPE_ICON[t]} {TYPE_LABELS[t]}</option>
-                ))}
-              </Select>
-            </Field>
+            <div className={draft.type === 'crypto' ? '' : 'grid grid-cols-2 gap-3'}>
+              <Field label="Type">
+                <Select value={draft.type} onChange={(e) => setDraft({ ...draft, type: e.target.value as HoldingType })}>
+                  {(Object.keys(TYPE_LABELS) as HoldingType[]).map((t) => (
+                    <option key={t} value={t}>{TYPE_ICON[t]} {TYPE_LABELS[t]}</option>
+                  ))}
+                </Select>
+              </Field>
+              {draft.type !== 'crypto' && (
+                <Field label="Exchange" hint="For live prices, e.g. ASX">
+                  <Input value={draft.exchange} onChange={(e) => setDraft({ ...draft, exchange: e.target.value })} placeholder="ASX, NASDAQ…" maxLength={12} />
+                </Field>
+              )}
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <Field label="Quantity">
                 <Input value={draft.quantity} onChange={(e) => setDraft({ ...draft, quantity: e.target.value })} inputMode="decimal" placeholder="0" />
