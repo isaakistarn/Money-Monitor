@@ -7,7 +7,6 @@ import { useSettings } from '@/state/settings'
 import { cn } from '@/lib/cn'
 import { BrandMark } from '@/components/ui/BrandMark'
 import { RecurringBanner } from '@/components/transactions/RecurringBanner'
-import { BackupNudge } from '@/components/BackupNudge'
 
 export function AppLayout() {
   const { openEditor } = useUI()
@@ -86,7 +85,6 @@ export function AppLayout() {
         </header>
 
         <main className="flex-1 w-full max-w-content mx-auto px-4 md:px-8 py-5 md:py-8 pb-28 md:pb-12">
-          <BackupNudge />
           <RecurringBanner />
           <Outlet />
         </main>
