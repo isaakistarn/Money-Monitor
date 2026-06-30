@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { Field, Input, Select } from '@/components/ui/Field'
@@ -90,17 +90,26 @@ export function PaySplitModal({
 
   const incomeCats = (categories ?? []).filter((c) => c.kind === 'income')
 
-  // Lazily initialise the draft when the modal opens (keyed by what's passed in).
+  // Initialise the draft once per open-session via an effect (not during render),
+  // guarded by a ref so frequent re-renders — e.g. from background sync writing to
+  // the DB and refiring live queries — never reset what you're typing.
   const [draft, setDraft] = useState<Draft | null>(null)
-  const [bootKey, setBootKey] = useState<string>('')
-  const key = `${open}:${initial?.id ?? 'new'}:${mode}`
-  if (open && key !== bootKey && accounts) {
+  const initedFor = useRef<string | null>(null)
+  useEffect(() => {
+    if (!open) {
+      initedFor.current = null
+      setDraft(null)
+      return
+    }
+    if (!accounts) return
+    const k = `${initial?.id ?? 'new'}:${mode}`
+    if (initedFor.current === k) return // already initialised this session
+    initedFor.current = k
     const deposit = initial?.depositAccountId ?? accounts[0]?.id ?? ''
     const other = accounts.find((a) => a.id !== deposit)?.id ?? ''
     setDraft({ ...blankDraft(deposit, other), ...(initial ? fromTemplate(initial, currency) : {}) })
-    setBootKey(key)
-  }
-  if (!open && bootKey) setBootKey('')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, accounts, initial?.id, mode])
 
   const resolved = useMemo(() => {
     if (!draft) return null
