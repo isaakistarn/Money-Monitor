@@ -143,3 +143,7 @@ export function useRecurring() {
 export function useTotalTransactionCount() {
   return useLiveQuery(() => db.transactions.count(), [])
 }
+
+export function usePaySplits() {
+  return useLiveQuery(() => db.paySplits.orderBy('name').toArray(), [])
+}

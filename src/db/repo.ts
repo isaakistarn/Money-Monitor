@@ -1,5 +1,5 @@
 import { db } from './db'
-import type { Account, Budget, Recurring, Transaction } from '@/types/models'
+import type { Account, Budget, PaySplit, Recurring, Transaction } from '@/types/models'
 import { ymOf, addDaysISO, addMonthsISO } from '@/lib/date'
 import { uid } from '@/lib/cn'
 import { now, markChanged, markDeleted } from './changes'
@@ -255,6 +255,66 @@ export async function confirmRecurring(r: Recurring): Promise<void> {
 
 export async function skipRecurring(r: Recurring): Promise<void> {
   await bumpRecurring(r.id, { nextDue: advanceRecurring(r) })
+}
+
+/* --------------------------- Pay splits ----------------------------- */
+
+export async function savePaySplit(split: PaySplit): Promise<void> {
+  const ts = now()
+  await db.transaction('rw', db.paySplits, db.outbox, async () => {
+    await db.paySplits.put({ ...split, updatedAt: ts })
+    await markChanged('paySplits', split.id, ts)
+  })
+}
+
+export async function deletePaySplit(id: string): Promise<void> {
+  const ts = now()
+  await db.transaction('rw', db.paySplits, db.outbox, async () => {
+    await db.paySplits.delete(id)
+    await markDeleted('paySplits', id, ts)
+  })
+}
+
+export interface PaySplitExecution {
+  totalMinor: number
+  depositAccountId: string
+  categoryId?: string
+  date: string
+  note?: string
+  lines: Array<{ toAccountId: string; amountMinor: number; note?: string }>
+}
+
+/**
+ * Apply a paycheck split: record the full pay as a single income into the
+ * deposit account, then move each allocated portion out via a transfer. Income
+ * is counted once (transfers never touch income/expense stats), so monthly
+ * income reflects the true pay while balances land in the right accounts.
+ * Returns the number of transactions created.
+ */
+export async function executePaySplit(x: PaySplitExecution): Promise<number> {
+  let created = 0
+  await addTransaction({
+    type: 'income',
+    amountMinor: x.totalMinor,
+    accountId: x.depositAccountId,
+    categoryId: x.categoryId,
+    date: x.date,
+    note: x.note,
+  })
+  created++
+  for (const line of x.lines) {
+    if (line.amountMinor <= 0 || line.toAccountId === x.depositAccountId) continue
+    await addTransaction({
+      type: 'transfer',
+      amountMinor: line.amountMinor,
+      fromAccountId: x.depositAccountId,
+      toAccountId: line.toAccountId,
+      date: x.date,
+      note: line.note,
+    })
+    created++
+  }
+  return created
 }
 
 /* ------------------------- Rollup rebuild --------------------------- */

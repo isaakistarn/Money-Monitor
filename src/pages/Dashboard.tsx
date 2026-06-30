@@ -1,11 +1,13 @@
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Card, SectionHeader } from '@/components/ui/Card'
 import { Money } from '@/components/ui/Money'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Button } from '@/components/ui/Button'
 import { TransactionRow } from '@/components/transactions/TransactionRow'
+import { PaySplitModal } from '@/components/PaySplitModal'
 import { TrendLineChart } from '@/components/charts'
-import { IconPlus, IconList } from '@/components/ui/icons'
+import { IconPlus, IconList, IconSwap } from '@/components/ui/icons'
 import {
   useBalanceTotals,
   useMonthlyStat,
@@ -55,17 +57,23 @@ export function Dashboard() {
   const { openEditor } = useUI()
   const navigate = useNavigate()
   const currency = useCurrency()
+  const [splitOpen, setSplitOpen] = useState(false)
 
   const topSpend = (spend ?? []).slice(0, 5)
 
   return (
     <div className="space-y-6">
-      <div className="flex items-end justify-between">
+      <div className="flex items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Overview</h1>
           <p className="text-sm text-muted mt-0.5">{ymLabel(currentYm())}</p>
         </div>
+        <Button variant="secondary" onClick={() => setSplitOpen(true)}>
+          <IconSwap width={18} /> Split pay
+        </Button>
       </div>
+
+      <PaySplitModal mode="run" open={splitOpen} onClose={() => setSplitOpen(false)} />
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">

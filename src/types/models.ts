@@ -81,6 +81,32 @@ export interface Recurring extends Synced {
   active: boolean
 }
 
+/**
+ * A reusable "paycheck splitter": when income lands in `depositAccountId`, the
+ * allocations move portions into other accounts via transfers. Stored as a
+ * template so the same split can be applied to any pay amount.
+ */
+export type AllocationMode = 'percent' | 'fixed'
+
+export interface Allocation {
+  id: string
+  toAccountId: string
+  mode: AllocationMode
+  /** For 'percent': 0–100. For 'fixed': minor units. */
+  value: number
+  note?: string
+}
+
+export interface PaySplit extends Synced {
+  id: string
+  name: string
+  /** Account the pay is received into (the income lands here). */
+  depositAccountId: string
+  /** Income category for the deposit (e.g. Salary). */
+  categoryId?: string
+  allocations: Allocation[]
+}
+
 /* ---- Rollup tables (derived, maintained atomically on every write) ---- */
 
 export interface AccountRollup {
@@ -118,6 +144,7 @@ export const SYNCED_TABLES = [
   'transactions',
   'budgets',
   'recurring',
+  'paySplits',
 ] as const
 export type SyncedTable = (typeof SYNCED_TABLES)[number]
 

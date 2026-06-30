@@ -7,6 +7,7 @@ import {
   updateTransaction,
   deleteTransaction,
   upsertBudget,
+  executePaySplit,
   rebuildRollups,
 } from './repo'
 import { currentYm } from '@/lib/date'
@@ -111,6 +112,32 @@ describe('repository rollups', () => {
     expect(after.acc).toEqual(before.acc)
     expect(after.month).toEqual(before.month)
     expect(after.cat).toEqual(before.cat)
+  })
+
+  it('executePaySplit records income once and transfers the rest', async () => {
+    const bank = await addAccount({ name: 'Everyday', type: 'bank', openingBalanceMinor: 0 })
+    const save = await addAccount({ name: 'Savings', type: 'savings', openingBalanceMinor: 0 })
+    const bills = await addAccount({ name: 'Bills', type: 'bank', openingBalanceMinor: 0 })
+
+    const n = await executePaySplit({
+      totalMinor: 1000_00,
+      depositAccountId: bank.id,
+      date: todayInMonth(),
+      lines: [
+        { toAccountId: save.id, amountMinor: 300_00 },
+        { toAccountId: bills.id, amountMinor: 200_00 },
+      ],
+    })
+    expect(n).toBe(3) // 1 income + 2 transfers
+
+    expect(await balance(bank.id, 0)).toBe(500_00) // 1000 in − 300 − 200 out
+    expect(await balance(save.id, 0)).toBe(300_00)
+    expect(await balance(bills.id, 0)).toBe(200_00)
+
+    // Income counted once at the full pay; transfers never touch income/expense.
+    const stat = await db.monthlyStats.get(currentYm())
+    expect(stat?.incomeMinor).toBe(1000_00)
+    expect(stat?.expenseMinor ?? 0).toBe(0)
   })
 
   it('budget upsert replaces and removes on zero', async () => {

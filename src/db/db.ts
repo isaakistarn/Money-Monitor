@@ -5,6 +5,7 @@ import type {
   Transaction,
   Budget,
   Recurring,
+  PaySplit,
   AccountRollup,
   MonthlyStat,
   CategoryMonthly,
@@ -23,6 +24,7 @@ export class FinanceDB extends Dexie {
   categoryMonthly!: Table<CategoryMonthly, string>
   meta!: Table<Meta, string>
   outbox!: Table<OutboxEntry, string>
+  paySplits!: Table<PaySplit, string>
 
   constructor() {
     super('finance-tracker')
@@ -63,6 +65,11 @@ export class FinanceDB extends Dexie {
             })
         }
       })
+
+    // v3 adds reusable paycheck-split templates (synced like other entities).
+    this.version(3).stores({
+      paySplits: 'id, name, updatedAt',
+    })
   }
 }
 

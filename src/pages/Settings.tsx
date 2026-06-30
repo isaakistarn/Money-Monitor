@@ -14,6 +14,7 @@ import { getMeta } from '@/db/meta'
 import { estimateStorage, requestPersistentStorage } from '@/lib/storage'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { RecurringManager } from '@/components/RecurringManager'
+import { PaySplitManager } from '@/components/PaySplitManager'
 import { SyncCard } from '@/components/SyncCard'
 import { useTotalTransactionCount } from '@/hooks/useData'
 
@@ -118,6 +119,9 @@ export function Settings() {
 
       {/* Recurring */}
       <RecurringManager />
+
+      {/* Pay splits */}
+      <PaySplitManager />
 
       {/* Data & backup */}
       <Card className="p-5">
