@@ -5,25 +5,33 @@ import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { Field, Input } from '@/components/ui/Field'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { Sparkline } from '@/components/ui/Sparkline'
 import { useConfirm } from '@/components/ui/Confirm'
 import { IconTrend, IconPlus, IconTrash, IconRefresh, IconArrowUp, IconArrowDown } from '@/components/ui/icons'
 import { useWatchlist } from '@/hooks/useData'
 import { useUI } from '@/state/ui'
 import { addWatchItem, deleteWatchItem } from '@/db/repo'
 import { getMeta, setMeta } from '@/db/meta'
-import { fetchYahooQuote, yahooSymbol, RateLimitError, type FullQuote } from '@/lib/quotes'
+import { fetchYahooSeries, yahooSymbol, RateLimitError, type FullQuote } from '@/lib/quotes'
 import type { WatchItem } from '@/types/models'
 
 interface QState {
   loading?: boolean
   data?: FullQuote
+  closes?: number[]
   error?: string
 }
 
-// Short in-memory cache so navigating to the page doesn't refetch every time.
-const cache = new Map<string, { q: FullQuote; at: number }>()
+const cache = new Map<string, { q: FullQuote; closes: number[]; at: number }>()
 const TTL = 60_000
 const keyOf = (i: WatchItem) => `${i.symbol}|${i.exchange ?? ''}`
+
+const RANGES = [
+  { key: '1M', range: '1mo', interval: '1d' },
+  { key: '6M', range: '6mo', interval: '1d' },
+  { key: '1Y', range: '1y', interval: '1wk' },
+  { key: '5Y', range: '5y', interval: '1mo' },
+]
 
 function nativeMoney(price: number, currency: string): string {
   try {
@@ -39,13 +47,19 @@ function nativeMoney(price: number, currency: string): string {
 
 function asOfLabel(ms?: number): string {
   if (!ms) return ''
-  const diff = Date.now() - ms
-  const m = Math.round(diff / 60000)
+  const m = Math.round((Date.now() - ms) / 60000)
   if (m < 1) return 'just now'
   if (m < 60) return `${m} min ago`
   const h = Math.round(m / 60)
   if (h < 48) return `${h} h ago`
   return new Date(ms).toLocaleDateString(undefined, { dateStyle: 'medium' })
+}
+
+function pctOf(values: number[]): { up: boolean; pct: number } {
+  if (!values || values.length < 2) return { up: true, pct: 0 }
+  const first = values[0]
+  const last = values[values.length - 1]
+  return { up: last >= first, pct: first ? ((last - first) / first) * 100 : 0 }
 }
 
 function Change({ q }: { q: FullQuote }) {
@@ -58,6 +72,15 @@ function Change({ q }: { q: FullQuote }) {
   )
 }
 
+interface Detail {
+  item: WatchItem
+  rangeKey: string
+  quote?: FullQuote
+  closes?: number[]
+  loading?: boolean
+  error?: string
+}
+
 export function Watchlist() {
   const items = useWatchlist()
   const lastUpdated = useLiveQuery(() => getMeta<string | null>('watchUpdatedAt', null), [], null)
@@ -67,6 +90,7 @@ export function Watchlist() {
   const [quotes, setQuotes] = useState<Record<string, QState>>({})
   const [refreshing, setRefreshing] = useState(false)
   const [draft, setDraft] = useState<{ symbol: string; exchange: string } | null>(null)
+  const [detail, setDetail] = useState<Detail | null>(null)
   const busy = useRef(false)
 
   const setQ = (id: string, s: QState) => setQuotes((prev) => ({ ...prev, [id]: s }))
@@ -81,17 +105,17 @@ export function Watchlist() {
         const ck = keyOf(item)
         const cached = cache.get(ck)
         if (!force && cached && Date.now() - cached.at < TTL) {
-          setQ(item.id, { data: cached.q })
+          setQ(item.id, { data: cached.q, closes: cached.closes })
           continue
         }
-        setQ(item.id, { loading: true, data: cached?.q })
+        setQ(item.id, { loading: true, data: cached?.q, closes: cached?.closes })
         try {
-          const q = await fetchYahooQuote(yahooSymbol(item.symbol, item.exchange))
-          cache.set(ck, { q, at: Date.now() })
-          setQ(item.id, { data: q })
+          const r = await fetchYahooSeries(yahooSymbol(item.symbol, item.exchange), '1mo', '1d')
+          cache.set(ck, { q: r.quote, closes: r.closes, at: Date.now() })
+          setQ(item.id, { data: r.quote, closes: r.closes })
           fetched = true
         } catch (e) {
-          setQ(item.id, { error: (e as Error).message, data: cached?.q })
+          setQ(item.id, { error: (e as Error).message, data: cached?.q, closes: cached?.closes })
           if (e instanceof RateLimitError) {
             toast(e.message, 'error')
             break
@@ -105,12 +129,28 @@ export function Watchlist() {
     }
   }
 
-  // Auto-load (cache-aware) when the list becomes available or changes.
   const sig = (items ?? []).map((i) => `${i.id}:${i.symbol}:${i.exchange ?? ''}`).join(',')
   useEffect(() => {
     if (items && items.length) void load(items, false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sig])
+
+  const openDetail = (item: WatchItem) => {
+    const s = quotes[item.id]
+    setDetail({ item, rangeKey: '1M', quote: s?.data, closes: s?.closes })
+    if (!s?.closes) void loadDetail(item, '1M')
+  }
+
+  const loadDetail = async (item: WatchItem, rangeKey: string) => {
+    const cfg = RANGES.find((r) => r.key === rangeKey)!
+    setDetail((d) => (d && d.item.id === item.id ? { ...d, rangeKey, loading: true, error: undefined } : d))
+    try {
+      const r = await fetchYahooSeries(yahooSymbol(item.symbol, item.exchange), cfg.range, cfg.interval)
+      setDetail((d) => (d && d.item.id === item.id ? { ...d, rangeKey, quote: r.quote, closes: r.closes, loading: false } : d))
+    } catch (e) {
+      setDetail((d) => (d && d.item.id === item.id ? { ...d, rangeKey, loading: false, error: (e as Error).message } : d))
+    }
+  }
 
   const add = async () => {
     if (!draft?.symbol.trim()) return
@@ -123,6 +163,8 @@ export function Watchlist() {
     if (!ok) return
     await deleteWatchItem(item.id)
   }
+
+  const detailPct = detail?.closes ? pctOf(detail.closes) : null
 
   return (
     <div className="space-y-5 max-w-2xl">
@@ -145,7 +187,7 @@ export function Watchlist() {
         <EmptyState
           icon={<IconTrend width={32} />}
           title="No tickers yet"
-          message="Add stocks, ETFs, or crypto to watch their live prices — free, no setup."
+          message="Add stocks, ETFs, or crypto to watch their live prices and charts — free, no setup."
           action={<Button onClick={() => setDraft({ symbol: '', exchange: '' })}><IconPlus width={18} /> Add a ticker</Button>}
         />
       ) : (
@@ -153,41 +195,52 @@ export function Watchlist() {
           {items?.map((item) => {
             const s = quotes[item.id]
             const q = s?.data
+            const spark = s?.closes
+            const up = spark ? spark[spark.length - 1] >= spark[0] : (q ? q.change >= 0 : true)
             return (
-              <Card key={item.id} className="p-4 flex items-center gap-3">
-                <span className="grid place-items-center h-10 w-10 rounded-full bg-elevated text-xs font-bold shrink-0">
-                  {item.symbol.slice(0, 4)}
-                </span>
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium text-sm truncate">
-                    {q?.name || item.symbol}
-                    <span className="text-faint font-normal"> · {item.symbol}{item.exchange ? ` · ${item.exchange}` : q?.exchange ? ` · ${q.exchange}` : ''}</span>
-                  </p>
-                  <p className="text-xs text-faint">
-                    {s?.loading && !q ? 'Loading…'
-                      : s?.error && !q ? <span className="text-negative">{s.error}</span>
-                      : q ? `as of ${asOfLabel(q.asOf)}`
-                      : 'Tap Refresh to load'}
-                  </p>
+              <Card key={item.id} className="p-3.5">
+                <div className="flex items-center gap-3">
+                  <button onClick={() => openDetail(item)} className="flex items-center gap-3 flex-1 min-w-0 text-left">
+                    <span className="grid place-items-center h-10 w-10 rounded-full bg-elevated text-xs font-bold shrink-0">
+                      {item.symbol.slice(0, 4)}
+                    </span>
+                    <span className="flex-1 min-w-0">
+                      <span className="block font-medium text-sm truncate">
+                        {q?.name || item.symbol}
+                        <span className="text-faint font-normal"> · {item.symbol}{item.exchange ? ` · ${item.exchange}` : q?.exchange ? ` · ${q.exchange}` : ''}</span>
+                      </span>
+                      <span className="block text-xs text-faint">
+                        {s?.loading && !q ? 'Loading…'
+                          : s?.error && !q ? <span className="text-negative">{s.error}</span>
+                          : q ? `as of ${asOfLabel(q.asOf)}`
+                          : 'Tap to load'}
+                      </span>
+                    </span>
+                    <span className="text-right shrink-0">
+                      {q ? (
+                        <>
+                          <span className="block font-semibold tabular-nums">{nativeMoney(q.price, q.currency)}</span>
+                          <Change q={q} />
+                        </>
+                      ) : (
+                        <span className="block h-9 w-20 rounded bg-border/50 animate-pulse" />
+                      )}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => remove(item)}
+                    className="shrink-0 grid place-items-center h-9 w-9 rounded-lg text-faint hover:text-negative hover:bg-elevated"
+                    aria-label={`Remove ${item.symbol}`}
+                  >
+                    <IconTrash width={17} />
+                  </button>
                 </div>
-                <div className="text-right">
-                  {q ? (
-                    <>
-                      <p className="font-semibold tabular-nums">{nativeMoney(q.price, q.currency)}</p>
-                      <Change q={q} />
-                    </>
-                  ) : (
-                    <div className="h-9 w-20 rounded bg-border/50 animate-pulse" />
-                  )}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => remove(item)}
-                  className="shrink-0 grid place-items-center h-9 w-9 rounded-lg text-faint hover:text-negative hover:bg-elevated"
-                  aria-label={`Remove ${item.symbol}`}
-                >
-                  <IconTrash width={17} />
-                </button>
+                {spark && spark.length > 1 && (
+                  <button onClick={() => openDetail(item)} className="block w-full h-9 mt-2.5" aria-label="Open chart">
+                    <Sparkline values={spark} className={up ? 'text-positive' : 'text-negative'} />
+                  </button>
+                )}
               </Card>
             )
           })}
@@ -195,8 +248,8 @@ export function Watchlist() {
       )}
 
       <p className="text-xs text-faint">
-        Live data from Yahoo Finance (free, no key) — refreshed on demand and cached briefly. Prices are shown
-        in each market's own currency.
+        Live data and charts from Yahoo Finance (free, no key) — refreshed on demand and cached briefly. Prices
+        are shown in each market's own currency. Tap a ticker for a larger chart.
       </p>
 
       {/* Add modal */}
@@ -223,9 +276,69 @@ export function Watchlist() {
             </div>
             <p className="text-xs text-muted">
               US stocks work with just the symbol. For ASX use the symbol + exchange <code className="text-fg">ASX</code>{' '}
-              (or enter it Yahoo-style like <code className="text-fg">CBA.AX</code>). For crypto use a pair like{' '}
+              (or Yahoo-style like <code className="text-fg">CBA.AX</code>). For crypto use a pair like{' '}
               <code className="text-fg">BTC/USD</code>.
             </p>
+          </div>
+        )}
+      </Modal>
+
+      {/* Chart detail modal */}
+      <Modal open={!!detail} onClose={() => setDetail(null)} title={detail?.quote?.name || detail?.item.symbol || 'Chart'} size="lg">
+        {detail && (
+          <div className="space-y-4">
+            <div className="flex items-end justify-between">
+              <div>
+                {detail.quote && <p className="text-2xl font-bold tabular-nums">{nativeMoney(detail.quote.price, detail.quote.currency)}</p>}
+                {detailPct && (
+                  <p className={`text-sm font-medium ${detailPct.up ? 'text-positive' : 'text-negative'}`}>
+                    {detailPct.up ? '+' : '−'}{Math.abs(detailPct.pct).toFixed(2)}% · {detail.rangeKey}
+                  </p>
+                )}
+              </div>
+              <p className="text-xs text-faint text-right">
+                {detail.item.symbol}{detail.item.exchange ? ` · ${detail.item.exchange}` : ''}
+              </p>
+            </div>
+
+            <div className="h-44 rounded-xl bg-elevated/40 border border-border p-2">
+              {detail.loading && !detail.closes ? (
+                <div className="h-full w-full rounded bg-border/40 animate-pulse" />
+              ) : detail.error && !detail.closes ? (
+                <div className="h-full grid place-items-center text-sm text-negative">{detail.error}</div>
+              ) : detail.closes && detail.closes.length > 1 ? (
+                <Sparkline values={detail.closes} strokeWidth={2} className={detailPct?.up ? 'text-positive' : 'text-negative'} />
+              ) : (
+                <div className="h-full grid place-items-center text-sm text-muted">No chart data</div>
+              )}
+            </div>
+
+            <div className="flex gap-2">
+              {RANGES.map((r) => (
+                <button
+                  key={r.key}
+                  onClick={() => loadDetail(detail.item, r.key)}
+                  className={`flex-1 h-9 rounded-lg text-sm font-medium transition-colors ${
+                    detail.rangeKey === r.key ? 'bg-accent text-white' : 'bg-elevated text-muted hover:text-fg'
+                  }`}
+                >
+                  {r.key}
+                </button>
+              ))}
+            </div>
+
+            {detail.closes && detail.closes.length > 1 && detail.quote && (
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div className="flex justify-between rounded-lg bg-elevated/50 px-3 py-2">
+                  <span className="text-muted">High</span>
+                  <span className="font-medium tabular-nums">{nativeMoney(Math.max(...detail.closes), detail.quote.currency)}</span>
+                </div>
+                <div className="flex justify-between rounded-lg bg-elevated/50 px-3 py-2">
+                  <span className="text-muted">Low</span>
+                  <span className="font-medium tabular-nums">{nativeMoney(Math.min(...detail.closes), detail.quote.currency)}</span>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </Modal>

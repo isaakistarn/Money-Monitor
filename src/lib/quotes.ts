@@ -69,7 +69,9 @@ type YMeta = Record<string, unknown>
 export function metaToQuote(meta: YMeta): FullQuote {
   const price = Number(meta.regularMarketPrice)
   if (!Number.isFinite(price) || price <= 0) throw new Error('No price returned for that symbol.')
-  const prev = Number(meta.chartPreviousClose ?? meta.previousClose ?? price)
+  // Prefer the regular previous-day close so the headline change is the DAY
+  // move, independent of the chart range requested (which sets chartPreviousClose).
+  const prev = Number(meta.previousClose ?? meta.chartPreviousClose ?? price)
   const change = price - prev
   return {
     symbol: String(meta.symbol ?? ''),
@@ -83,9 +85,26 @@ export function metaToQuote(meta: YMeta): FullQuote {
   }
 }
 
-async function yahooChart(yahoo: string): Promise<YMeta> {
+/** Forward-fill null gaps and drop leading nulls so a series is plottable. */
+export function cleanSeries(raw: Array<number | null>): number[] {
+  const out: number[] = []
+  let last: number | null = null
+  for (const v of raw) {
+    if (v != null && Number.isFinite(v)) last = v
+    if (last != null) out.push(last)
+  }
+  return out
+}
+
+interface ChartData {
+  meta: YMeta
+  times: number[]
+  closes: number[]
+}
+
+async function yahooChart(yahoo: string, range = '1d', interval = '1d'): Promise<ChartData> {
   await throttle()
-  const target = `${CHART}${encodeURIComponent(yahoo)}?interval=1d&range=1d`
+  const target = `${CHART}${encodeURIComponent(yahoo)}?interval=${interval}&range=${range}`
   let res: Response
   try {
     res = await fetch(`${PROXY}${encodeURIComponent(target)}`)
@@ -94,16 +113,37 @@ async function yahooChart(yahoo: string): Promise<YMeta> {
   }
   if (res.status === 429) throw new RateLimitError('Price service is busy (rate limited). Try again shortly.')
   if (!res.ok) throw new Error(`Price service error (HTTP ${res.status}).`)
-  const j = (await res.json()) as { chart?: { result?: Array<{ meta?: YMeta }>; error?: { description?: string } } }
+  const j = (await res.json()) as {
+    chart?: {
+      result?: Array<{ meta?: YMeta; timestamp?: number[]; indicators?: { quote?: Array<{ close?: Array<number | null> }> } }>
+      error?: { description?: string }
+    }
+  }
   if (j?.chart?.error) throw new Error(j.chart.error.description || 'Symbol not found.')
-  const meta = j?.chart?.result?.[0]?.meta
-  if (!meta) throw new Error('Symbol not found.')
-  return meta
+  const result = j?.chart?.result?.[0]
+  if (!result?.meta) throw new Error('Symbol not found.')
+  return {
+    meta: result.meta,
+    times: result.timestamp ?? [],
+    closes: cleanSeries(result.indicators?.quote?.[0]?.close ?? []),
+  }
 }
 
 /** Full quote (price, day change, %) for a Yahoo symbol. */
 export async function fetchYahooQuote(yahoo: string): Promise<FullQuote> {
-  return metaToQuote(await yahooChart(yahoo))
+  return metaToQuote((await yahooChart(yahoo)).meta)
+}
+
+export interface QuoteWithSeries {
+  quote: FullQuote
+  closes: number[]
+  times: number[]
+}
+
+/** One call returns the latest quote AND a price history for charting. */
+export async function fetchYahooSeries(yahoo: string, range = '1mo', interval = '1d'): Promise<QuoteWithSeries> {
+  const d = await yahooChart(yahoo, range, interval)
+  return { quote: metaToQuote(d.meta), closes: d.closes, times: d.times }
 }
 
 /** FX rate from→to via Yahoo (e.g. USD→AUD). */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { metaToQuote, yahooSymbol } from './quotes'
+import { metaToQuote, yahooSymbol, cleanSeries } from './quotes'
 
 describe('yahoo chart meta → quote', () => {
   it('computes price, day change and percent from meta', () => {
@@ -51,5 +51,13 @@ describe('yahooSymbol builder', () => {
   it('maps other exchanges (LSE, TSX)', () => {
     expect(yahooSymbol('HSBA', 'LSE')).toBe('HSBA.L')
     expect(yahooSymbol('SHOP', 'TSX')).toBe('SHOP.TO')
+  })
+})
+
+describe('cleanSeries', () => {
+  it('forward-fills null gaps and drops leading nulls', () => {
+    expect(cleanSeries([null, 10, null, 12, null])).toEqual([10, 10, 12, 12])
+    expect(cleanSeries([1, 2, 3])).toEqual([1, 2, 3])
+    expect(cleanSeries([null, null])).toEqual([])
   })
 })
