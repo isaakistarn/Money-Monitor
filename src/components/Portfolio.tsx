@@ -1,15 +1,18 @@
 import { useState } from 'react'
+import { useLiveQuery } from 'dexie-react-hooks'
 import { Card, SectionHeader } from '@/components/ui/Card'
 import { Money } from '@/components/ui/Money'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { Field, Input, Select } from '@/components/ui/Field'
 import { useConfirm } from '@/components/ui/Confirm'
-import { IconPlus, IconTrash, IconChart } from '@/components/ui/icons'
+import { IconPlus, IconTrash, IconChart, IconRefresh } from '@/components/ui/icons'
 import { useHoldings } from '@/hooks/useData'
 import { useCurrency } from '@/state/settings'
 import { useUI } from '@/state/ui'
 import { addHolding, updateHolding, deleteHolding } from '@/db/repo'
+import { refreshHoldingPrices } from '@/db/prices'
+import { getMeta } from '@/db/meta'
 import { parseMoney, minorToInput, currencySymbol, formatMoney } from '@/lib/money'
 import { holdingValueMinor, holdingGainMinor, gainPct } from '@/lib/portfolio'
 import type { Holding, HoldingType } from '@/types/models'
@@ -48,14 +51,51 @@ function Gain({ minor, pct }: { minor?: number; pct?: number }) {
   )
 }
 
+function updatedAgo(iso: string | null): string {
+  if (!iso) return ''
+  const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000)
+  if (m < 1) return 'just now'
+  if (m < 60) return `${m} min ago`
+  const h = Math.round(m / 60)
+  if (h < 24) return `${h} h ago`
+  return new Date(iso).toLocaleDateString(undefined, { dateStyle: 'medium' })
+}
+
 export function Portfolio() {
   const holdings = useHoldings()
   const currency = useCurrency()
   const confirm = useConfirm()
   const { toast } = useUI()
   const [draft, setDraft] = useState<Draft | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
+  const pricesUpdatedAt = useLiveQuery(() => getMeta<string | null>('pricesUpdatedAt', null), [], null)
 
   const list = holdings ?? []
+  const withSymbols = list.filter((h) => h.symbol)
+
+  const refreshPrices = async () => {
+    const apikey = await getMeta<string>('alphaVantageKey', '')
+    if (!apikey) return toast('Add your Alpha Vantage key in Settings → Live prices.', 'error')
+    if (withSymbols.length === 0) return toast('Add ticker symbols to your holdings first.', 'error')
+    const quoteCurrency = await getMeta<string>('quoteCurrency', 'USD')
+    setRefreshing(true)
+    try {
+      const res = await refreshHoldingPrices(withSymbols, { apikey, quoteCurrency, appCurrency: currency })
+      if (res.updated > 0) {
+        toast(
+          `Updated ${res.updated} price${res.updated === 1 ? '' : 's'}` +
+            (res.failed.length ? ` · ${res.failed.length} failed` : ''),
+          res.failed.length ? 'error' : 'success',
+        )
+      } else {
+        toast(res.rateLimited ? res.failed[0]?.error ?? 'Rate limit reached.' : res.failed[0]?.error ?? 'No prices updated.', 'error')
+      }
+    } catch (e) {
+      toast((e as Error).message, 'error')
+    } finally {
+      setRefreshing(false)
+    }
+  }
   const totalValue = list.reduce((s, h) => s + h.valueMinor, 0)
   const hasCost = list.some((h) => h.gainMinor != null)
   const totalGain = list.reduce((s, h) => s + (h.gainMinor ?? 0), 0)
@@ -118,7 +158,17 @@ export function Portfolio() {
     <section>
       <SectionHeader
         title="Investments"
-        action={<Button size="sm" variant="secondary" onClick={() => open()}><IconPlus width={16} /> Add</Button>}
+        action={
+          <div className="flex gap-2">
+            {withSymbols.length > 0 && (
+              <Button size="sm" variant="secondary" onClick={refreshPrices} disabled={refreshing}>
+                <IconRefresh width={15} className={refreshing ? 'animate-spin' : undefined} />
+                {refreshing ? 'Updating…' : 'Refresh'}
+              </Button>
+            )}
+            <Button size="sm" variant="secondary" onClick={() => open()}><IconPlus width={16} /> Add</Button>
+          </div>
+        }
       />
 
       {list.length === 0 ? (
@@ -137,6 +187,7 @@ export function Portfolio() {
             <div>
               <p className="text-xs text-muted">Portfolio value</p>
               <p className="text-lg md:text-xl font-bold mt-0.5"><Money minor={totalValue} /></p>
+              {pricesUpdatedAt && <p className="text-[11px] text-faint mt-0.5">Prices updated {updatedAgo(pricesUpdatedAt)}</p>}
             </div>
             {hasCost && (
               <div className="text-right">
