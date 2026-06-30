@@ -54,6 +54,9 @@ export interface Transaction extends Synced {
   /** Denormalised 'yyyy-mm' bucket for fast monthly queries, in local time. */
   ym: string
   note?: string
+  /** When true, kept in balances + the list but excluded from charts, monthly
+   *  income/expense stats, category spend and budgets. */
+  excluded?: boolean
   createdAt: string
 }
 

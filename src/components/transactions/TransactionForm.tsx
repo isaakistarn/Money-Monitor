@@ -29,6 +29,7 @@ export function TransactionForm() {
   const [toAccountId, setToAccountId] = useState('')
   const [date, setDate] = useState(todayISO())
   const [note, setNote] = useState('')
+  const [excluded, setExcluded] = useState(false)
   const [error, setError] = useState('')
 
   const isEdit = !!editing
@@ -45,6 +46,7 @@ export function TransactionForm() {
       setToAccountId(editing.toAccountId ?? '')
       setDate(editing.date)
       setNote(editing.note ?? '')
+      setExcluded(editing.excluded ?? false)
     } else {
       setType('expense')
       setAmount('')
@@ -54,6 +56,7 @@ export function TransactionForm() {
       setToAccountId('')
       setDate(todayISO())
       setNote('')
+      setExcluded(false)
     }
     setError('')
     // Focus amount for the fastest possible entry.
@@ -111,6 +114,7 @@ export function TransactionForm() {
       toAccountId: type === 'transfer' ? toAccountId : undefined,
       date,
       note,
+      excluded: type === 'transfer' ? false : excluded,
     }
     try {
       if (editing) {
@@ -238,6 +242,23 @@ export function TransactionForm() {
             <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Groceries" maxLength={80} />
           </Field>
         </div>
+
+        {type !== 'transfer' && (
+          <label className="flex items-start gap-2.5 text-sm cursor-pointer select-none rounded-xl border border-border p-3">
+            <input
+              type="checkbox"
+              checked={excluded}
+              onChange={(e) => setExcluded(e.target.checked)}
+              className="h-4 w-4 mt-0.5 accent-accent shrink-0"
+            />
+            <span>
+              <span className="font-medium">Exclude from charts &amp; reports</span>
+              <span className="block text-xs text-muted mt-0.5">
+                Still affects your account balance, but is left out of graphs, monthly totals, category spend and budgets.
+              </span>
+            </span>
+          </label>
+        )}
 
         {error && !/amount/i.test(error) && (
           <p className="text-sm text-negative">{error}</p>

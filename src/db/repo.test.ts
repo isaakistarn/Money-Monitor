@@ -118,6 +118,33 @@ describe('repository rollups', () => {
     expect(after.cat).toEqual(before.cat)
   })
 
+  it('excluded expense affects balance but not monthly/category stats', async () => {
+    await db.categories.add({ id: 'food', name: 'Food', kind: 'expense', icon: '🍔', isDefault: true })
+    const bank = await addAccount({ name: 'Bank', type: 'bank', openingBalanceMinor: 100_00 })
+
+    await addTransaction({ type: 'expense', amountMinor: 30_00, accountId: bank.id, categoryId: 'food', date: todayInMonth() })
+    const ex = await addTransaction({ type: 'expense', amountMinor: 50_00, accountId: bank.id, categoryId: 'food', date: todayInMonth(), excluded: true })
+
+    // Balance reflects BOTH expenses (real money left the account).
+    expect(await balance(bank.id, 100_00)).toBe(20_00) // 100 - 30 - 50
+
+    // Analytics only count the non-excluded one.
+    expect((await db.monthlyStats.get(currentYm()))?.expenseMinor).toBe(30_00)
+    expect((await db.categoryMonthly.get(`${currentYm()}:food`))?.spentMinor).toBe(30_00)
+
+    // Un-excluding via update brings it back into the stats.
+    await updateTransaction(ex.id, { excluded: false })
+    expect((await db.monthlyStats.get(currentYm()))?.expenseMinor).toBe(80_00)
+    expect(await balance(bank.id, 100_00)).toBe(20_00) // balance unchanged
+
+    // rebuildRollups reproduces the same (re-exclude first).
+    await updateTransaction(ex.id, { excluded: true })
+    const before = await db.monthlyStats.get(currentYm())
+    await rebuildRollups()
+    expect(await db.monthlyStats.get(currentYm())).toEqual(before)
+    expect(await balance(bank.id, 100_00)).toBe(20_00)
+  })
+
   it('executePaySplit records income once and transfers the rest', async () => {
     const bank = await addAccount({ name: 'Everyday', type: 'bank', openingBalanceMinor: 0 })
     const save = await addAccount({ name: 'Savings', type: 'savings', openingBalanceMinor: 0 })

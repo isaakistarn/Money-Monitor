@@ -58,13 +58,14 @@ async function bumpCategory(ym: string, categoryId: string | undefined, delta: n
 
 /** Apply (+1) or reverse (-1) all rollup effects of a transaction. */
 async function applyRollups(t: Transaction, sign: 1 | -1) {
-  // Account balances
+  // Account balances always reflect real money movement.
   await bumpAccount(t.accountId, sign * accountEffect(t, t.accountId ?? ''))
   if (t.type === 'transfer') {
     await bumpAccount(t.fromAccountId, sign * -t.amountMinor)
     await bumpAccount(t.toAccountId, sign * t.amountMinor)
   }
-  // Monthly income/expense totals — transfers are intentionally excluded.
+  // Analytics aggregates skip excluded transactions (and transfers).
+  if (t.excluded) return
   if (t.type === 'income') await bumpMonthly(t.ym, sign * t.amountMinor, 0)
   if (t.type === 'expense') {
     await bumpMonthly(t.ym, 0, sign * t.amountMinor)
@@ -85,6 +86,7 @@ export async function addTransaction(input: NewTransaction): Promise<Transaction
     date: input.date,
     ym: ymOf(input.date),
     note: input.note?.trim() || undefined,
+    excluded: input.excluded || undefined,
     createdAt: input.createdAt ?? new Date().toISOString(),
     updatedAt: ts,
   }
@@ -398,13 +400,18 @@ export async function rebuildRollups(): Promise<void> {
           if (t.toAccountId) accDelta.set(t.toAccountId, (accDelta.get(t.toAccountId) ?? 0) + t.amountMinor)
           return
         }
+        // Account balance always counts the real movement.
+        if (t.accountId) {
+          const d = t.type === 'income' ? t.amountMinor : -t.amountMinor
+          accDelta.set(t.accountId, (accDelta.get(t.accountId) ?? 0) + d)
+        }
+        // Excluded transactions are left out of the analytics aggregates.
+        if (t.excluded) return
         const m = monthly.get(t.ym) ?? { income: 0, expense: 0 }
         if (t.type === 'income') {
           m.income += t.amountMinor
-          if (t.accountId) accDelta.set(t.accountId, (accDelta.get(t.accountId) ?? 0) + t.amountMinor)
         } else {
           m.expense += t.amountMinor
-          if (t.accountId) accDelta.set(t.accountId, (accDelta.get(t.accountId) ?? 0) - t.amountMinor)
           if (t.categoryId) {
             const key = `${t.ym}:${t.categoryId}`
             const c = catMonthly.get(key) ?? { ym: t.ym, categoryId: t.categoryId, spent: 0 }

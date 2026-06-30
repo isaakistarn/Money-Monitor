@@ -50,7 +50,14 @@ export const TransactionRow = memo(function TransactionRow({
         {tx.type === 'transfer' ? v.icon : <span className="text-base leading-none">{meta.categoryIcon ?? '•'}</span>}
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block text-sm font-medium text-fg truncate">{title}</span>
+        <span className="flex items-center gap-1.5 min-w-0">
+          <span className="text-sm font-medium text-fg truncate">{title}</span>
+          {tx.excluded && (
+            <span className="shrink-0 text-[10px] font-medium text-muted bg-elevated rounded px-1.5 py-0.5 leading-none">
+              excluded
+            </span>
+          )}
+        </span>
         {subtitle && <span className="block text-xs text-faint truncate">{subtitle}</span>}
       </span>
       <span className="text-right shrink-0">
