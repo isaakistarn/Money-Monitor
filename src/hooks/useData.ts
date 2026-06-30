@@ -169,3 +169,7 @@ export function useTotalTransactionCount() {
 export function usePaySplits() {
   return useLiveQuery(() => db.paySplits.orderBy('name').toArray(), [])
 }
+
+export function useWatchlist() {
+  return useLiveQuery(() => db.watchlist.orderBy('order').toArray(), [])
+}

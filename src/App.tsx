@@ -17,6 +17,7 @@ import { Transactions } from '@/pages/Transactions'
 import { Budgets } from '@/pages/Budgets'
 import { Accounts } from '@/pages/Accounts'
 import { Analytics } from '@/pages/Analytics'
+import { Watchlist } from '@/pages/Watchlist'
 import { Settings } from '@/pages/Settings'
 
 function RootLayout() {
@@ -55,6 +56,7 @@ const router = createHashRouter([
       { path: 'transactions', element: <Transactions /> },
       { path: 'budgets', element: <Budgets /> },
       { path: 'accounts', element: <Accounts /> },
+      { path: 'watchlist', element: <Watchlist /> },
       { path: 'analytics', element: <Analytics /> },
       { path: 'settings', element: <Settings /> },
       { path: '*', element: <Dashboard /> },

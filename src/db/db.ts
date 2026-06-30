@@ -7,6 +7,7 @@ import type {
   Recurring,
   PaySplit,
   Holding,
+  WatchItem,
   AccountRollup,
   MonthlyStat,
   CategoryMonthly,
@@ -27,6 +28,7 @@ export class FinanceDB extends Dexie {
   outbox!: Table<OutboxEntry, string>
   paySplits!: Table<PaySplit, string>
   holdings!: Table<Holding, string>
+  watchlist!: Table<WatchItem, string>
 
   constructor() {
     super('finance-tracker')
@@ -76,6 +78,11 @@ export class FinanceDB extends Dexie {
     // v4 adds the investment portfolio (stocks, crypto, commodities, …).
     this.version(4).stores({
       holdings: 'id, type, name, updatedAt',
+    })
+
+    // v5 adds the watchlist (tickers to follow; live data is fetched, not stored).
+    this.version(5).stores({
+      watchlist: 'id, order, updatedAt',
     })
   }
 }

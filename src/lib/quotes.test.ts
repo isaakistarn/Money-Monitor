@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseQuote, parsePrice, RateLimitError } from './quotes'
+import { parseQuote, parsePrice, parseFullQuote, RateLimitError } from './quotes'
 
 describe('twelve data response parsing', () => {
   it('parses a quote price and its native currency', () => {
@@ -26,6 +26,21 @@ describe('twelve data response parsing', () => {
 
   it('throws a normal error for other failures', () => {
     expect(() => parseQuote({ status: 'error', code: 404, message: 'symbol not found' })).toThrow()
+  })
+
+  it('parses a full watchlist quote (price, change, %, market state)', () => {
+    const q = parseFullQuote({
+      symbol: 'CBA', name: 'Commonwealth Bank', exchange: 'ASX', currency: 'AUD',
+      close: '120.50', change: '1.25', percent_change: '1.05', is_market_open: true,
+    })
+    expect(q).toMatchObject({ symbol: 'CBA', name: 'Commonwealth Bank', exchange: 'ASX', currency: 'AUD', isMarketOpen: true })
+    expect(q.price).toBeCloseTo(120.5)
+    expect(q.change).toBeCloseTo(1.25)
+    expect(q.percentChange).toBeCloseTo(1.05)
+  })
+
+  it('full quote surfaces rate-limit errors too', () => {
+    expect(() => parseFullQuote({ status: 'error', code: 429, message: 'out of API credits' })).toThrow(RateLimitError)
   })
 
   it('throws when the price is missing or zero', () => {

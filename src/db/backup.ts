@@ -3,7 +3,7 @@ import { rebuildRollups } from './repo'
 import { setMeta } from './meta'
 import { now, markChanged } from './changes'
 import { todayISO } from '@/lib/date'
-import { SYNCED_TABLES, type Account, type Budget, type Category, type Holding, type PaySplit, type Recurring, type Transaction } from '@/types/models'
+import { SYNCED_TABLES, type Account, type Budget, type Category, type Holding, type PaySplit, type Recurring, type Transaction, type WatchItem } from '@/types/models'
 
 export interface BackupFile {
   app: 'finance-tracker'
@@ -17,12 +17,13 @@ export interface BackupFile {
     recurring: Recurring[]
     paySplits?: PaySplit[]
     holdings?: Holding[]
+    watchlist?: WatchItem[]
     meta: Array<{ key: string; value: unknown }>
   }
 }
 
 export async function buildBackup(): Promise<BackupFile> {
-  const [accounts, categories, transactions, budgets, recurring, paySplits, holdings, meta] = await Promise.all([
+  const [accounts, categories, transactions, budgets, recurring, paySplits, holdings, watchlist, meta] = await Promise.all([
     db.accounts.toArray(),
     db.categories.toArray(),
     db.transactions.toArray(),
@@ -30,13 +31,14 @@ export async function buildBackup(): Promise<BackupFile> {
     db.recurring.toArray(),
     db.paySplits.toArray(),
     db.holdings.toArray(),
+    db.watchlist.toArray(),
     db.meta.toArray(),
   ])
   return {
     app: 'finance-tracker',
     version: 1,
     exportedAt: new Date().toISOString(),
-    data: { accounts, categories, transactions, budgets, recurring, paySplits, holdings, meta },
+    data: { accounts, categories, transactions, budgets, recurring, paySplits, holdings, watchlist, meta },
   }
 }
 
@@ -110,15 +112,16 @@ export async function importBackup(text: string): Promise<{ transactions: number
   const recurring = stamp(data.recurring ?? [])
   const paySplits = stamp(data.paySplits ?? [])
   const holdings = stamp(data.holdings ?? [])
+  const watchlist = stamp(data.watchlist ?? [])
 
   await db.transaction(
     'rw',
-    [db.accounts, db.categories, db.transactions, db.budgets, db.recurring, db.paySplits, db.holdings, db.meta,
+    [db.accounts, db.categories, db.transactions, db.budgets, db.recurring, db.paySplits, db.holdings, db.watchlist, db.meta,
      db.accountRollup, db.monthlyStats, db.categoryMonthly, db.outbox],
     async () => {
       await Promise.all([
         db.accounts.clear(), db.categories.clear(), db.transactions.clear(),
-        db.budgets.clear(), db.recurring.clear(), db.paySplits.clear(), db.holdings.clear(), db.meta.clear(), db.outbox.clear(),
+        db.budgets.clear(), db.recurring.clear(), db.paySplits.clear(), db.holdings.clear(), db.watchlist.clear(), db.meta.clear(), db.outbox.clear(),
       ])
       await db.accounts.bulkAdd(accounts)
       await db.categories.bulkAdd(categories)
@@ -127,8 +130,9 @@ export async function importBackup(text: string): Promise<{ transactions: number
       await db.recurring.bulkAdd(recurring)
       await db.paySplits.bulkAdd(paySplits)
       await db.holdings.bulkAdd(holdings)
+      await db.watchlist.bulkAdd(watchlist)
       await db.meta.bulkPut(data.meta ?? [])
-      const tables = { accounts, categories, transactions, budgets, recurring, paySplits, holdings }
+      const tables = { accounts, categories, transactions, budgets, recurring, paySplits, holdings, watchlist }
       for (const name of SYNCED_TABLES) {
         for (const row of tables[name]) await markChanged(name, row.id, ts)
       }
@@ -142,12 +146,12 @@ export async function importBackup(text: string): Promise<{ transactions: number
 export async function clearAllData(): Promise<void> {
   await db.transaction(
     'rw',
-    [db.accounts, db.categories, db.transactions, db.budgets, db.recurring, db.paySplits, db.holdings, db.meta,
+    [db.accounts, db.categories, db.transactions, db.budgets, db.recurring, db.paySplits, db.holdings, db.watchlist, db.meta,
      db.accountRollup, db.monthlyStats, db.categoryMonthly, db.outbox],
     async () => {
       await Promise.all([
         db.accounts.clear(), db.categories.clear(), db.transactions.clear(),
-        db.budgets.clear(), db.recurring.clear(), db.paySplits.clear(), db.holdings.clear(), db.meta.clear(),
+        db.budgets.clear(), db.recurring.clear(), db.paySplits.clear(), db.holdings.clear(), db.watchlist.clear(), db.meta.clear(),
         db.accountRollup.clear(), db.monthlyStats.clear(), db.categoryMonthly.clear(),
         db.outbox.clear(),
       ])

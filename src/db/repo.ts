@@ -1,5 +1,5 @@
 import { db } from './db'
-import type { Account, Budget, Holding, PaySplit, Recurring, Transaction } from '@/types/models'
+import type { Account, Budget, Holding, PaySplit, Recurring, Transaction, WatchItem } from '@/types/models'
 import { ymOf, addDaysISO, addMonthsISO } from '@/lib/date'
 import { uid } from '@/lib/cn'
 import { now, markChanged, markDeleted } from './changes'
@@ -344,6 +344,34 @@ export async function deleteHolding(id: string): Promise<void> {
   await db.transaction('rw', db.holdings, db.outbox, async () => {
     await db.holdings.delete(id)
     await markDeleted('holdings', id, ts)
+  })
+}
+
+/* --------------------------- Watchlist ------------------------------ */
+
+export async function addWatchItem(input: { symbol: string; exchange?: string }): Promise<WatchItem> {
+  const ts = now()
+  const count = await db.watchlist.count()
+  const item: WatchItem = {
+    id: uid(),
+    symbol: input.symbol.trim().toUpperCase(),
+    exchange: input.exchange?.trim().toUpperCase() || undefined,
+    order: count,
+    createdAt: new Date().toISOString(),
+    updatedAt: ts,
+  }
+  await db.transaction('rw', db.watchlist, db.outbox, async () => {
+    await db.watchlist.add(item)
+    await markChanged('watchlist', item.id, ts)
+  })
+  return item
+}
+
+export async function deleteWatchItem(id: string): Promise<void> {
+  const ts = now()
+  await db.transaction('rw', db.watchlist, db.outbox, async () => {
+    await db.watchlist.delete(id)
+    await markDeleted('watchlist', id, ts)
   })
 }
 

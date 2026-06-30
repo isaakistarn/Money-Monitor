@@ -68,6 +68,41 @@ export async function fetchStockQuote(symbol: string, apikey: string, exchange?:
   return parseQuote(await tdGet('quote', params))
 }
 
+export interface FullQuote {
+  symbol: string
+  name: string
+  exchange: string
+  currency: string
+  price: number
+  change: number
+  percentChange: number
+  isMarketOpen: boolean
+}
+
+/** Parse a /quote response into the richer shape the watchlist shows. */
+export function parseFullQuote(j: TDJson): FullQuote {
+  checkError(j)
+  const price = Number(j.close)
+  if (!Number.isFinite(price) || price <= 0) throw new Error('No price returned for that symbol.')
+  return {
+    symbol: String(j.symbol ?? ''),
+    name: String(j.name ?? ''),
+    exchange: String(j.exchange ?? ''),
+    currency: String(j.currency ?? '').toUpperCase(),
+    price,
+    change: Number(j.change ?? 0) || 0,
+    percentChange: Number(j.percent_change ?? 0) || 0,
+    isMarketOpen: Boolean(j.is_market_open),
+  }
+}
+
+/** Full quote (price, day change, %) for the watchlist. */
+export async function fetchFullQuote(symbol: string, apikey: string, exchange?: string): Promise<FullQuote> {
+  const params: Record<string, string> = { symbol, apikey }
+  if (exchange) params.exchange = exchange
+  return parseFullQuote(await tdGet('quote', params))
+}
+
 /** Direct price of `from` in `to` currency — used for crypto (e.g. BTC/AUD). */
 export async function fetchPair(from: string, to: string, apikey: string): Promise<number> {
   return parsePrice(await tdGet('price', { symbol: `${from}/${to}`, apikey }))

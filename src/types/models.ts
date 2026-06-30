@@ -133,6 +133,16 @@ export interface Holding extends Synced {
   createdAt: string
 }
 
+/** A ticker the user follows on the Watchlist (live data is fetched, not stored). */
+export interface WatchItem extends Synced {
+  id: string
+  symbol: string
+  /** Exchange for price lookups, e.g. ASX, NASDAQ. Blank = provider default. */
+  exchange?: string
+  order: number
+  createdAt: string
+}
+
 /* ---- Rollup tables (derived, maintained atomically on every write) ---- */
 
 export interface AccountRollup {
@@ -172,6 +182,7 @@ export const SYNCED_TABLES = [
   'recurring',
   'paySplits',
   'holdings',
+  'watchlist',
 ] as const
 export type SyncedTable = (typeof SYNCED_TABLES)[number]
 

@@ -113,20 +113,20 @@ export function AppLayout() {
         className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-surface/95 backdrop-blur border-t border-border flex"
         style={{ paddingBottom: 'var(--safe-bottom)' }}
       >
-        {NAV_ITEMS.map(({ to, label, Icon }) => (
+        {NAV_ITEMS.map(({ to, label, short, Icon }) => (
           <NavLink
             key={to}
             to={to}
             end={to === '/'}
             className={({ isActive }) =>
               cn(
-                'flex-1 flex flex-col items-center justify-center gap-0.5 h-16 text-[11px] font-medium transition-colors',
+                'flex-1 min-w-0 flex flex-col items-center justify-center gap-0.5 h-16 text-[10px] font-medium transition-colors',
                 isActive ? 'text-accent' : 'text-faint',
               )
             }
           >
-            <Icon width={22} />
-            {label}
+            <Icon width={21} />
+            <span className="max-w-full truncate px-0.5">{short ?? label}</span>
           </NavLink>
         ))}
       </nav>
