@@ -7,12 +7,12 @@ import { Field, Input } from '@/components/ui/Field'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Sparkline } from '@/components/ui/Sparkline'
 import { useConfirm } from '@/components/ui/Confirm'
-import { IconTrend, IconPlus, IconTrash, IconRefresh, IconArrowUp, IconArrowDown } from '@/components/ui/icons'
+import { IconTrend, IconPlus, IconTrash, IconRefresh, IconArrowUp, IconArrowDown, IconSearch } from '@/components/ui/icons'
 import { useWatchlist } from '@/hooks/useData'
 import { useUI } from '@/state/ui'
 import { addWatchItem, deleteWatchItem } from '@/db/repo'
 import { getMeta, setMeta } from '@/db/meta'
-import { fetchYahooSeries, yahooSymbol, RateLimitError, type FullQuote } from '@/lib/quotes'
+import { fetchYahooSeries, yahooSymbol, searchSymbols, RateLimitError, type FullQuote, type SymbolMatch } from '@/lib/quotes'
 import type { WatchItem } from '@/types/models'
 
 interface QState {
@@ -93,6 +93,35 @@ export function Watchlist() {
   const [detail, setDetail] = useState<Detail | null>(null)
   const busy = useRef(false)
 
+  // Symbol search (in the Add modal).
+  const [query, setQuery] = useState('')
+  const [results, setResults] = useState<SymbolMatch[]>([])
+  const [searching, setSearching] = useState(false)
+
+  useEffect(() => {
+    if (!draft) return
+    const q = query.trim()
+    if (q.length < 2) { setResults([]); setSearching(false); return }
+    setSearching(true)
+    const t = setTimeout(async () => {
+      try {
+        setResults(await searchSymbols(q))
+      } catch {
+        setResults([])
+      } finally {
+        setSearching(false)
+      }
+    }, 300)
+    return () => clearTimeout(t)
+  }, [query, draft])
+
+  const openAdd = () => { setQuery(''); setResults([]); setDraft({ symbol: '', exchange: '' }) }
+  const closeAdd = () => { setDraft(null); setQuery(''); setResults([]) }
+  const pickResult = async (m: SymbolMatch) => {
+    await addWatchItem({ symbol: m.symbol, exchange: '' })
+    closeAdd()
+  }
+
   const setQ = (id: string, s: QState) => setQuotes((prev) => ({ ...prev, [id]: s }))
 
   const load = async (list: WatchItem[], force: boolean) => {
@@ -155,7 +184,7 @@ export function Watchlist() {
   const add = async () => {
     if (!draft?.symbol.trim()) return
     await addWatchItem({ symbol: draft.symbol, exchange: draft.exchange })
-    setDraft(null)
+    closeAdd()
   }
 
   const remove = async (item: WatchItem) => {
@@ -179,7 +208,7 @@ export function Watchlist() {
               <IconRefresh width={18} className={refreshing ? 'animate-spin' : undefined} /> Refresh
             </Button>
           )}
-          <Button onClick={() => setDraft({ symbol: '', exchange: '' })}><IconPlus width={18} /> Add</Button>
+          <Button onClick={openAdd}><IconPlus width={18} /> Add</Button>
         </div>
       </div>
 
@@ -188,7 +217,7 @@ export function Watchlist() {
           icon={<IconTrend width={32} />}
           title="No tickers yet"
           message="Add stocks, ETFs, or crypto to watch their live prices and charts — free, no setup."
-          action={<Button onClick={() => setDraft({ symbol: '', exchange: '' })}><IconPlus width={18} /> Add a ticker</Button>}
+          action={<Button onClick={openAdd}><IconPlus width={18} /> Add a ticker</Button>}
         />
       ) : (
         <div className="space-y-2.5">
@@ -255,30 +284,61 @@ export function Watchlist() {
       {/* Add modal */}
       <Modal
         open={!!draft}
-        onClose={() => setDraft(null)}
+        onClose={closeAdd}
         title="Add ticker"
         footer={
           <>
-            <Button variant="secondary" onClick={() => setDraft(null)}>Cancel</Button>
-            <Button onClick={add}>Add</Button>
+            <Button variant="secondary" onClick={closeAdd}>Cancel</Button>
+            <Button onClick={add} disabled={!draft?.symbol.trim()}>Add manually</Button>
           </>
         }
       >
         {draft && (
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Symbol">
-                <Input autoFocus value={draft.symbol} onChange={(e) => setDraft({ ...draft, symbol: e.target.value })} placeholder="AAPL, CBA, BTC/USD" maxLength={16} />
-              </Field>
-              <Field label="Exchange" hint="e.g. ASX (blank for US)">
-                <Input value={draft.exchange} onChange={(e) => setDraft({ ...draft, exchange: e.target.value })} placeholder="ASX, NASDAQ…" maxLength={12} />
-              </Field>
+            <Field label="Search company or ticker">
+              <div className="relative">
+                <IconSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-faint pointer-events-none" width={18} />
+                <Input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder="e.g. Commonwealth Bank, AAPL, BHP" className="pl-10" />
+              </div>
+            </Field>
+
+            {query.trim().length >= 2 && (
+              <div className="rounded-xl border border-border divide-y divide-border/60 max-h-72 overflow-y-auto">
+                {searching && results.length === 0 ? (
+                  <p className="text-sm text-muted px-3 py-3">Searching…</p>
+                ) : results.length === 0 ? (
+                  <p className="text-sm text-muted px-3 py-3">No matches. Try the full company name or the ticker.</p>
+                ) : (
+                  results.map((m) => (
+                    <button
+                      key={`${m.symbol}-${m.exchange}`}
+                      onClick={() => pickResult(m)}
+                      className="w-full flex items-center justify-between gap-3 px-3 py-2.5 text-left hover:bg-elevated transition-colors"
+                    >
+                      <span className="min-w-0">
+                        <span className="block text-sm font-medium truncate">{m.name}</span>
+                        <span className="block text-xs text-faint">
+                          {m.symbol}{m.exchange ? ` · ${m.exchange}` : ''}{m.type && m.type !== 'EQUITY' ? ` · ${m.type.toLowerCase()}` : ''}
+                        </span>
+                      </span>
+                      <span className="shrink-0 text-accent"><IconPlus width={18} /></span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+
+            <div className="border-t border-border pt-3">
+              <p className="text-xs text-muted mb-2">Or add manually</p>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Symbol">
+                  <Input value={draft.symbol} onChange={(e) => setDraft({ ...draft, symbol: e.target.value })} placeholder="AAPL, CBA, BTC/USD" maxLength={16} />
+                </Field>
+                <Field label="Exchange" hint="e.g. ASX (blank for US)">
+                  <Input value={draft.exchange} onChange={(e) => setDraft({ ...draft, exchange: e.target.value })} placeholder="ASX, NASDAQ…" maxLength={12} />
+                </Field>
+              </div>
             </div>
-            <p className="text-xs text-muted">
-              US stocks work with just the symbol. For ASX use the symbol + exchange <code className="text-fg">ASX</code>{' '}
-              (or Yahoo-style like <code className="text-fg">CBA.AX</code>). For crypto use a pair like{' '}
-              <code className="text-fg">BTC/USD</code>.
-            </p>
           </div>
         )}
       </Modal>

@@ -11,6 +11,7 @@
 
 const PROXY = 'https://corsproxy.io/?url='
 const CHART = 'https://query1.finance.yahoo.com/v8/finance/chart/'
+const SEARCH = 'https://query1.finance.yahoo.com/v1/finance/search'
 
 export class RateLimitError extends Error {}
 
@@ -150,4 +151,48 @@ export async function fetchYahooSeries(yahoo: string, range = '1mo', interval = 
 export async function fetchExchangeRate(from: string, to: string): Promise<number> {
   const q = await fetchYahooQuote(`${from.toUpperCase()}${to.toUpperCase()}=X`)
   return q.price
+}
+
+/* ------------------------------ Search ------------------------------ */
+
+export interface SymbolMatch {
+  symbol: string
+  name: string
+  exchange: string
+  type: string
+}
+
+interface SearchJson {
+  quotes?: Array<{ symbol?: string; shortname?: string; longname?: string; exchDisp?: string; quoteType?: string }>
+}
+
+const SEARCH_TYPES = new Set(['EQUITY', 'ETF', 'MUTUALFUND', 'CRYPTOCURRENCY', 'CURRENCY', 'INDEX'])
+
+/** Parse Yahoo's search response into clean matches (skips futures/options noise). */
+export function parseSearch(j: SearchJson): SymbolMatch[] {
+  return (j.quotes ?? [])
+    .filter((x) => x.symbol && (!x.quoteType || SEARCH_TYPES.has(x.quoteType)))
+    .map((x) => ({
+      symbol: x.symbol as string,
+      name: x.shortname || x.longname || (x.symbol as string),
+      exchange: x.exchDisp || '',
+      type: x.quoteType || '',
+    }))
+}
+
+/** Look up tickers by company name or symbol (e.g. "commonwealth bank" → CBA.AX). */
+export async function searchSymbols(query: string): Promise<SymbolMatch[]> {
+  const q = query.trim()
+  if (q.length < 2) return []
+  await throttle()
+  const target = `${SEARCH}?q=${encodeURIComponent(q)}&quotesCount=10&newsCount=0&listsCount=0`
+  let res: Response
+  try {
+    res = await fetch(`${PROXY}${encodeURIComponent(target)}`)
+  } catch {
+    throw new Error('Could not reach the search service.')
+  }
+  if (res.status === 429) throw new RateLimitError('Search is busy. Try again shortly.')
+  if (!res.ok) throw new Error(`Search error (HTTP ${res.status}).`)
+  return parseSearch((await res.json()) as SearchJson)
 }

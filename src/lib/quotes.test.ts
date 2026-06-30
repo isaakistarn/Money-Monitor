@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { metaToQuote, yahooSymbol, cleanSeries } from './quotes'
+import { metaToQuote, yahooSymbol, cleanSeries, parseSearch } from './quotes'
 
 describe('yahoo chart meta → quote', () => {
   it('computes price, day change and percent from meta', () => {
@@ -51,6 +51,26 @@ describe('yahooSymbol builder', () => {
   it('maps other exchanges (LSE, TSX)', () => {
     expect(yahooSymbol('HSBA', 'LSE')).toBe('HSBA.L')
     expect(yahooSymbol('SHOP', 'TSX')).toBe('SHOP.TO')
+  })
+})
+
+describe('parseSearch', () => {
+  it('maps matches and skips futures/options noise', () => {
+    const r = parseSearch({
+      quotes: [
+        { symbol: 'CBA.AX', shortname: 'CWLTH BANK FPO [CBA]', exchDisp: 'Australian', quoteType: 'EQUITY' },
+        { symbol: 'AAPL', longname: 'Apple Inc.', exchDisp: 'NASDAQ', quoteType: 'EQUITY' },
+        { symbol: 'ESZ24.CME', shortname: 'E-mini', exchDisp: 'CME', quoteType: 'FUTURE' },
+        { shortname: 'no symbol', quoteType: 'EQUITY' },
+      ],
+    })
+    expect(r).toHaveLength(2)
+    expect(r[0]).toMatchObject({ symbol: 'CBA.AX', name: 'CWLTH BANK FPO [CBA]', exchange: 'Australian' })
+    expect(r[1]).toMatchObject({ symbol: 'AAPL', name: 'Apple Inc.' })
+  })
+
+  it('handles an empty response', () => {
+    expect(parseSearch({})).toEqual([])
   })
 })
 
