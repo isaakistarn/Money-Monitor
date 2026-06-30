@@ -8,9 +8,11 @@
  * converted correctly into the app currency.
  */
 
-const BASE = 'https://api.twelvedata.com'
+import { acquireCredit, RateLimitError } from './ratelimit'
 
-export class RateLimitError extends Error {}
+export { RateLimitError, DailyLimitError } from './ratelimit'
+
+const BASE = 'https://api.twelvedata.com'
 
 type TDJson = Record<string, unknown>
 
@@ -46,6 +48,8 @@ export function parsePrice(j: TDJson): number {
 }
 
 async function tdGet(path: string, params: Record<string, string>): Promise<TDJson> {
+  // Respect the free-plan limits (8/min, 800/day) before every request.
+  await acquireCredit()
   const url = `${BASE}/${path}?${new URLSearchParams(params).toString()}`
   let res: Response
   try {

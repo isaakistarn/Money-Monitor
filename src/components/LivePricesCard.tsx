@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
+import { useLiveQuery } from 'dexie-react-hooks'
 import { Card, SectionHeader } from '@/components/ui/Card'
 import { Field, Input } from '@/components/ui/Field'
 import { IconChart } from '@/components/ui/icons'
 import { getMeta, setMeta } from '@/db/meta'
+import { PER_DAY, PER_MINUTE } from '@/lib/ratelimit'
 
 /**
  * Settings card for Twelve Data live prices. The API key is stored only on this
@@ -10,12 +12,16 @@ import { getMeta, setMeta } from '@/db/meta'
  */
 export function LivePricesCard() {
   const [apikey, setKey] = useState<string | null>(null)
+  const credits = useLiveQuery(() => getMeta<{ day: string; used: number }>('tdCredits', { day: '', used: 0 }), [])
 
   useEffect(() => {
     getMeta<string>('twelveDataKey', '').then(setKey)
   }, [])
 
   if (apikey === null) return null
+
+  const today = new Date().toISOString().slice(0, 10)
+  const usedToday = credits && credits.day === today ? credits.used : 0
 
   return (
     <Card className="p-5">
@@ -26,9 +32,20 @@ export function LivePricesCard() {
           Get a free <a href="https://twelvedata.com/pricing" target="_blank" rel="noreferrer" className="text-accent underline">Twelve Data API key</a> (no
           card needed) to refresh investment prices from the <b>Refresh</b> button on the Accounts page.
           Covers US, ASX, and other markets plus crypto, and prices are converted to your currency
-          automatically. The free tier allows ~800 requests/day (8/min). The key is stored only on this device.
+          automatically. The key is stored only on this device.
         </p>
       </div>
+
+      <div className="flex items-center justify-between text-sm mb-4">
+        <span className="text-muted">Used today</span>
+        <span className="font-medium tabular-nums">
+          {usedToday} / {PER_DAY}
+          <span className="text-faint font-normal"> credits · max {PER_MINUTE}/min</span>
+        </span>
+      </div>
+      {usedToday >= PER_DAY && (
+        <p className="text-xs text-warning mb-4">Daily limit reached — refreshing pauses until it resets at midnight UTC.</p>
+      )}
 
       <Field
         label="Twelve Data API key"
