@@ -244,7 +244,7 @@ export function PaySplitModal({
             <div className="grid grid-cols-2 gap-3">
               <Field label="Pay amount">
                 <div className="relative">
-                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted">{currencySymbol(currency)}</span>
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none">{currencySymbol(currency)}</span>
                   <Input
                     value={draft.amount}
                     onChange={(e) => setDraft({ ...draft, amount: e.target.value })}
@@ -320,7 +320,7 @@ export function PaySplitModal({
                           <option value="fixed">Amount</option>
                         </Select>
                         <div className="relative flex-1">
-                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted text-sm">
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted text-sm pointer-events-none">
                             {a.mode === 'percent' ? '%' : currencySymbol(currency)}
                           </span>
                           <Input

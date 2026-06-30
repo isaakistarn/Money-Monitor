@@ -94,7 +94,7 @@ export function Transactions() {
       {/* Search + filter toggle */}
       <div className="flex gap-2">
         <div className="relative flex-1">
-          <IconSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" width={18} />
+          <IconSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-faint pointer-events-none" width={18} />
           <Input
             data-search-input
             value={query}

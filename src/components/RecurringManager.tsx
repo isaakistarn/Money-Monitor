@@ -148,7 +148,7 @@ export function RecurringManager() {
             />
             <Field label="Amount">
               <div className="relative">
-                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted">{currencySymbol(currency)}</span>
+                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none">{currencySymbol(currency)}</span>
                 <Input value={draft.amount} onChange={(e) => setDraft({ ...draft, amount: e.target.value })} inputMode="decimal" placeholder="0.00" className="pl-8" />
               </div>
             </Field>

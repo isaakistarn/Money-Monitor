@@ -179,7 +179,7 @@ export function Accounts() {
               hint={isLiability(draft.type) ? 'For a credit card, enter the amount currently owed.' : 'Balance before any transactions are recorded.'}
             >
               <div className="relative">
-                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted">{currencySymbol(currency)}</span>
+                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none">{currencySymbol(currency)}</span>
                 <Input value={draft.opening} onChange={(e) => setDraft({ ...draft, opening: e.target.value })} inputMode="decimal" placeholder="0.00" className="pl-8" />
               </div>
             </Field>

@@ -265,14 +265,14 @@ export function Portfolio() {
               </Field>
               <Field label="Current price (each)">
                 <div className="relative">
-                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted">{currencySymbol(currency)}</span>
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none">{currencySymbol(currency)}</span>
                   <Input value={draft.price} onChange={(e) => setDraft({ ...draft, price: e.target.value })} inputMode="decimal" placeholder="0.00" className="pl-8" />
                 </div>
               </Field>
             </div>
             <Field label="Total invested (optional)" hint="Used to show gain/loss.">
               <div className="relative">
-                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted">{currencySymbol(currency)}</span>
+                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none">{currencySymbol(currency)}</span>
                 <Input value={draft.cost} onChange={(e) => setDraft({ ...draft, cost: e.target.value })} inputMode="decimal" placeholder="0.00" className="pl-8" />
               </div>
             </Field>

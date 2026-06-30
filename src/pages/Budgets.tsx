@@ -154,7 +154,7 @@ export function Budgets() {
             </Field>
             <Field label="Monthly limit">
               <div className="relative">
-                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted">{currencySymbol(currency)}</span>
+                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none">{currencySymbol(currency)}</span>
                 <Input
                   autoFocus
                   value={editing.amount}
