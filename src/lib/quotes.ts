@@ -1,72 +1,18 @@
 /**
- * Twelve Data quote helpers. Called directly from the browser (Twelve Data
- * sends permissive CORS headers). Free tier: ~800 requests/day, 8/min, across
- * US (NYSE/NASDAQ), ASX, and many other markets plus crypto and FX.
+ * Live quotes via Yahoo Finance, proxied through corsproxy.io so the browser
+ * can reach it (Yahoo doesn't send CORS headers). Keyless and free, covering US,
+ * ASX, and other markets plus crypto and FX. A light throttle keeps us polite to
+ * the public proxy.
  *
- * Key advantage over a fixed "quote currency": the /quote endpoint returns the
- * security's own `currency`, so a US stock (USD) and an ASX stock (AUD) are each
- * converted correctly into the app currency.
+ * Symbols use Yahoo conventions: US `AAPL`, ASX `CBA.AX`, crypto `BTC-USD`,
+ * FX `USDAUD=X`. The yahooSymbol() helper builds these from a plain
+ * symbol + exchange.
  */
 
-import { acquireCredit, RateLimitError } from './ratelimit'
+const PROXY = 'https://corsproxy.io/?url='
+const CHART = 'https://query1.finance.yahoo.com/v8/finance/chart/'
 
-export { RateLimitError, DailyLimitError } from './ratelimit'
-
-const BASE = 'https://api.twelvedata.com'
-
-type TDJson = Record<string, unknown>
-
-/** Twelve Data reports problems in-band as { status:'error', code, message }. */
-function checkError(j: TDJson): void {
-  if (j.status === 'error' || j.code) {
-    const msg = String(j.message ?? 'Twelve Data request failed.')
-    if (j.code === 429 || /credit|limit|minute|per day/i.test(msg)) throw new RateLimitError(msg)
-    throw new Error(msg)
-  }
-}
-
-export interface ParsedQuote {
-  price: number
-  currency: string
-}
-
-/** Parse a /quote response → latest price + its native currency. */
-export function parseQuote(j: TDJson): ParsedQuote {
-  checkError(j)
-  const price = Number(j.close)
-  const currency = String(j.currency ?? '').toUpperCase()
-  if (!Number.isFinite(price) || price <= 0) throw new Error('No price returned for that symbol.')
-  return { price, currency }
-}
-
-/** Parse a /price or /exchange_rate response → a single number. */
-export function parsePrice(j: TDJson): number {
-  checkError(j)
-  const v = Number((j.price ?? j.rate) as string)
-  if (!Number.isFinite(v) || v <= 0) throw new Error('No price returned.')
-  return v
-}
-
-async function tdGet(path: string, params: Record<string, string>): Promise<TDJson> {
-  // Respect the free-plan limits (8/min, 800/day) before every request.
-  await acquireCredit()
-  const url = `${BASE}/${path}?${new URLSearchParams(params).toString()}`
-  let res: Response
-  try {
-    res = await fetch(url)
-  } catch {
-    throw new Error('Could not reach Twelve Data (network or CORS).')
-  }
-  if (!res.ok && res.status !== 429) throw new Error(`Twelve Data error (HTTP ${res.status}).`)
-  return (await res.json()) as TDJson
-}
-
-/** Latest stock/ETF quote (price + currency). `exchange` disambiguates markets (e.g. ASX). */
-export async function fetchStockQuote(symbol: string, apikey: string, exchange?: string): Promise<ParsedQuote> {
-  const params: Record<string, string> = { symbol, apikey }
-  if (exchange) params.exchange = exchange
-  return parseQuote(await tdGet('quote', params))
-}
+export class RateLimitError extends Error {}
 
 export interface FullQuote {
   symbol: string
@@ -76,39 +22,92 @@ export interface FullQuote {
   price: number
   change: number
   percentChange: number
-  isMarketOpen: boolean
+  /** Epoch ms of the last trade, if provided. */
+  asOf?: number
 }
 
-/** Parse a /quote response into the richer shape the watchlist shows. */
-export function parseFullQuote(j: TDJson): FullQuote {
-  checkError(j)
-  const price = Number(j.close)
+// Map a user-facing exchange to Yahoo's ticker suffix.
+const EX_SUFFIX: Record<string, string> = {
+  ASX: '.AX',
+  NASDAQ: '', NYSE: '', NYSEARCA: '', ARCA: '', AMEX: '', BATS: '', OTC: '', US: '',
+  LSE: '.L', LON: '.L', LONDON: '.L',
+  TSX: '.TO', TSXV: '.V',
+  NSE: '.NS', BSE: '.BO',
+  HKEX: '.HK', HKG: '.HK',
+  TSE: '.T', JPX: '.T', TYO: '.T',
+  FRA: '.F', FSX: '.F', XETRA: '.DE', ETR: '.DE', GER: '.DE',
+  EPA: '.PA', EURONEXT: '.PA', PAR: '.PA',
+  SIX: '.SW', SWX: '.SW',
+  NZX: '.NZ', NZE: '.NZ',
+}
+
+/** Build a Yahoo symbol from a plain symbol + exchange (+ crypto pairing). */
+export function yahooSymbol(symbol: string, exchange?: string, opts?: { crypto?: boolean; quoteCurrency?: string }): string {
+  let s = symbol.trim().toUpperCase()
+  const qc = (opts?.quoteCurrency || 'USD').toUpperCase()
+  if (opts?.crypto || s.includes('/')) {
+    s = s.replace('/', '-')
+    if (!s.includes('-')) s = `${s}-${qc}`
+    return s
+  }
+  if (s.includes('.') || s.includes('=')) return s // already a Yahoo ticker / FX pair
+  const suffix = EX_SUFFIX[(exchange || '').trim().toUpperCase()] ?? ''
+  return s + suffix
+}
+
+// Politeness throttle so bursts don't trip the public proxy's limits.
+let lastReq = 0
+async function throttle(): Promise<void> {
+  const wait = lastReq + 250 - Date.now()
+  if (wait > 0) await new Promise((r) => setTimeout(r, wait))
+  lastReq = Date.now()
+}
+
+type YMeta = Record<string, unknown>
+
+/** Turn Yahoo chart `meta` into our quote shape (computing day change). */
+export function metaToQuote(meta: YMeta): FullQuote {
+  const price = Number(meta.regularMarketPrice)
   if (!Number.isFinite(price) || price <= 0) throw new Error('No price returned for that symbol.')
+  const prev = Number(meta.chartPreviousClose ?? meta.previousClose ?? price)
+  const change = price - prev
   return {
-    symbol: String(j.symbol ?? ''),
-    name: String(j.name ?? ''),
-    exchange: String(j.exchange ?? ''),
-    currency: String(j.currency ?? '').toUpperCase(),
+    symbol: String(meta.symbol ?? ''),
+    name: String(meta.shortName ?? meta.longName ?? meta.symbol ?? ''),
+    exchange: String(meta.fullExchangeName ?? meta.exchangeName ?? ''),
+    currency: String(meta.currency ?? '').toUpperCase(),
     price,
-    change: Number(j.change ?? 0) || 0,
-    percentChange: Number(j.percent_change ?? 0) || 0,
-    isMarketOpen: Boolean(j.is_market_open),
+    change,
+    percentChange: prev ? (change / prev) * 100 : 0,
+    asOf: meta.regularMarketTime ? Number(meta.regularMarketTime) * 1000 : undefined,
   }
 }
 
-/** Full quote (price, day change, %) for the watchlist. */
-export async function fetchFullQuote(symbol: string, apikey: string, exchange?: string): Promise<FullQuote> {
-  const params: Record<string, string> = { symbol, apikey }
-  if (exchange) params.exchange = exchange
-  return parseFullQuote(await tdGet('quote', params))
+async function yahooChart(yahoo: string): Promise<YMeta> {
+  await throttle()
+  const target = `${CHART}${encodeURIComponent(yahoo)}?interval=1d&range=1d`
+  let res: Response
+  try {
+    res = await fetch(`${PROXY}${encodeURIComponent(target)}`)
+  } catch {
+    throw new Error('Could not reach the price service (proxy or network).')
+  }
+  if (res.status === 429) throw new RateLimitError('Price service is busy (rate limited). Try again shortly.')
+  if (!res.ok) throw new Error(`Price service error (HTTP ${res.status}).`)
+  const j = (await res.json()) as { chart?: { result?: Array<{ meta?: YMeta }>; error?: { description?: string } } }
+  if (j?.chart?.error) throw new Error(j.chart.error.description || 'Symbol not found.')
+  const meta = j?.chart?.result?.[0]?.meta
+  if (!meta) throw new Error('Symbol not found.')
+  return meta
 }
 
-/** Direct price of `from` in `to` currency — used for crypto (e.g. BTC/AUD). */
-export async function fetchPair(from: string, to: string, apikey: string): Promise<number> {
-  return parsePrice(await tdGet('price', { symbol: `${from}/${to}`, apikey }))
+/** Full quote (price, day change, %) for a Yahoo symbol. */
+export async function fetchYahooQuote(yahoo: string): Promise<FullQuote> {
+  return metaToQuote(await yahooChart(yahoo))
 }
 
-/** FX rate from→to (e.g. USD→AUD), to convert a quote into the app currency. */
-export async function fetchExchangeRate(from: string, to: string, apikey: string): Promise<number> {
-  return parsePrice(await tdGet('exchange_rate', { symbol: `${from}/${to}`, apikey }))
+/** FX rate from→to via Yahoo (e.g. USD→AUD). */
+export async function fetchExchangeRate(from: string, to: string): Promise<number> {
+  const q = await fetchYahooQuote(`${from.toUpperCase()}${to.toUpperCase()}=X`)
+  return q.price
 }

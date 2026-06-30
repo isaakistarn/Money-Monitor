@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { Card, SectionHeader } from '@/components/ui/Card'
 import { Money } from '@/components/ui/Money'
@@ -69,18 +69,21 @@ export function Portfolio() {
   const { toast } = useUI()
   const [draft, setDraft] = useState<Draft | null>(null)
   const [refreshing, setRefreshing] = useState(false)
-  const pricesUpdatedAt = useLiveQuery(() => getMeta<string | null>('pricesUpdatedAt', null), [], null)
+  const pricesUpdatedAt = useLiveQuery(() => getMeta<string | null>('pricesUpdatedAt', null), [])
+  const autoRan = useRef(false)
 
   const list = holdings ?? []
   const withSymbols = list.filter((h) => h.symbol)
 
-  const refreshPrices = async () => {
-    const apikey = await getMeta<string>('twelveDataKey', '')
-    if (!apikey) return toast('Add your Twelve Data key in Settings → Live prices.', 'error')
-    if (withSymbols.length === 0) return toast('Add ticker symbols to your holdings first.', 'error')
+  const refreshPrices = async (notify = true) => {
+    if (withSymbols.length === 0) {
+      if (notify) toast('Add ticker symbols to your holdings first.', 'error')
+      return
+    }
     setRefreshing(true)
     try {
-      const res = await refreshHoldingPrices(withSymbols, { apikey, appCurrency: currency })
+      const res = await refreshHoldingPrices(withSymbols, { appCurrency: currency })
+      if (!notify) return
       if (res.updated > 0) {
         toast(
           `Updated ${res.updated} price${res.updated === 1 ? '' : 's'}` +
@@ -88,14 +91,24 @@ export function Portfolio() {
           res.failed.length ? 'error' : 'success',
         )
       } else {
-        toast(res.rateLimited ? res.failed[0]?.error ?? 'Rate limit reached.' : res.failed[0]?.error ?? 'No prices updated.', 'error')
+        toast(res.failed[0]?.error ?? 'No prices updated.', 'error')
       }
     } catch (e) {
-      toast((e as Error).message, 'error')
+      if (notify) toast((e as Error).message, 'error')
     } finally {
       setRefreshing(false)
     }
   }
+
+  // Auto-refresh (quietly) when prices are stale, so the portfolio tracks live.
+  useEffect(() => {
+    if (autoRan.current || pricesUpdatedAt === undefined || withSymbols.length === 0) return
+    const stale = !pricesUpdatedAt || Date.now() - new Date(pricesUpdatedAt).getTime() > 15 * 60_000
+    if (!stale) return
+    autoRan.current = true
+    void refreshPrices(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pricesUpdatedAt, withSymbols.length])
   const totalValue = list.reduce((s, h) => s + h.valueMinor, 0)
   const hasCost = list.some((h) => h.gainMinor != null)
   const totalGain = list.reduce((s, h) => s + (h.gainMinor ?? 0), 0)
@@ -162,7 +175,7 @@ export function Portfolio() {
         action={
           <div className="flex gap-2">
             {withSymbols.length > 0 && (
-              <Button size="sm" variant="secondary" onClick={refreshPrices} disabled={refreshing}>
+              <Button size="sm" variant="secondary" onClick={() => refreshPrices()} disabled={refreshing}>
                 <IconRefresh width={15} className={refreshing ? 'animate-spin' : undefined} />
                 {refreshing ? 'Updating…' : 'Refresh'}
               </Button>
@@ -249,7 +262,7 @@ export function Portfolio() {
               <Field label="Name" className="col-span-2">
                 <Input autoFocus value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="e.g. Apple" maxLength={40} />
               </Field>
-              <Field label="Symbol">
+              <Field label="Symbol" hint="Tracks the price live">
                 <Input value={draft.symbol} onChange={(e) => setDraft({ ...draft, symbol: e.target.value })} placeholder="AAPL" maxLength={12} />
               </Field>
             </div>

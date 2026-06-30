@@ -15,7 +15,6 @@ import { estimateStorage, requestPersistentStorage } from '@/lib/storage'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { RecurringManager } from '@/components/RecurringManager'
 import { PaySplitManager } from '@/components/PaySplitManager'
-import { LivePricesCard } from '@/components/LivePricesCard'
 import { SyncCard } from '@/components/SyncCard'
 import { useTotalTransactionCount } from '@/hooks/useData'
 
@@ -123,9 +122,6 @@ export function Settings() {
 
       {/* Pay splits */}
       <PaySplitManager />
-
-      {/* Live prices */}
-      <LivePricesCard />
 
       {/* Data & backup */}
       <Card className="p-5">

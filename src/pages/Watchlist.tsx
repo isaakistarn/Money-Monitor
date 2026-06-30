@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
@@ -11,8 +10,8 @@ import { IconTrend, IconPlus, IconTrash, IconRefresh, IconArrowUp, IconArrowDown
 import { useWatchlist } from '@/hooks/useData'
 import { useUI } from '@/state/ui'
 import { addWatchItem, deleteWatchItem } from '@/db/repo'
-import { getMeta } from '@/db/meta'
-import { fetchFullQuote, RateLimitError, type FullQuote } from '@/lib/quotes'
+import { getMeta, setMeta } from '@/db/meta'
+import { fetchYahooQuote, yahooSymbol, RateLimitError, type FullQuote } from '@/lib/quotes'
 import type { WatchItem } from '@/types/models'
 
 interface QState {
@@ -21,8 +20,7 @@ interface QState {
   error?: string
 }
 
-// Short-lived in-memory cache so navigating to the page doesn't refetch (and
-// spend credits) every time. Keyed by symbol|exchange.
+// Short in-memory cache so navigating to the page doesn't refetch every time.
 const cache = new Map<string, { q: FullQuote; at: number }>()
 const TTL = 60_000
 const keyOf = (i: WatchItem) => `${i.symbol}|${i.exchange ?? ''}`
@@ -39,6 +37,17 @@ function nativeMoney(price: number, currency: string): string {
   }
 }
 
+function asOfLabel(ms?: number): string {
+  if (!ms) return ''
+  const diff = Date.now() - ms
+  const m = Math.round(diff / 60000)
+  if (m < 1) return 'just now'
+  if (m < 60) return `${m} min ago`
+  const h = Math.round(m / 60)
+  if (h < 48) return `${h} h ago`
+  return new Date(ms).toLocaleDateString(undefined, { dateStyle: 'medium' })
+}
+
 function Change({ q }: { q: FullQuote }) {
   const up = q.change >= 0
   return (
@@ -51,10 +60,9 @@ function Change({ q }: { q: FullQuote }) {
 
 export function Watchlist() {
   const items = useWatchlist()
-  const apikey = useLiveQuery(() => getMeta<string>('twelveDataKey', ''), [], '')
+  const lastUpdated = useLiveQuery(() => getMeta<string | null>('watchUpdatedAt', null), [], null)
   const confirm = useConfirm()
   const { toast } = useUI()
-  const navigate = useNavigate()
 
   const [quotes, setQuotes] = useState<Record<string, QState>>({})
   const [refreshing, setRefreshing] = useState(false)
@@ -63,10 +71,11 @@ export function Watchlist() {
 
   const setQ = (id: string, s: QState) => setQuotes((prev) => ({ ...prev, [id]: s }))
 
-  const load = async (list: WatchItem[], key: string, force: boolean) => {
-    if (busy.current || !key) return
+  const load = async (list: WatchItem[], force: boolean) => {
+    if (busy.current) return
     busy.current = true
     setRefreshing(true)
+    let fetched = false
     try {
       for (const item of list) {
         const ck = keyOf(item)
@@ -77,9 +86,10 @@ export function Watchlist() {
         }
         setQ(item.id, { loading: true, data: cached?.q })
         try {
-          const q = await fetchFullQuote(item.symbol, key, item.exchange)
+          const q = await fetchYahooQuote(yahooSymbol(item.symbol, item.exchange))
           cache.set(ck, { q, at: Date.now() })
           setQ(item.id, { data: q })
+          fetched = true
         } catch (e) {
           setQ(item.id, { error: (e as Error).message, data: cached?.q })
           if (e instanceof RateLimitError) {
@@ -88,18 +98,19 @@ export function Watchlist() {
           }
         }
       }
+      if (fetched) await setMeta('watchUpdatedAt', new Date().toISOString())
     } finally {
       busy.current = false
       setRefreshing(false)
     }
   }
 
-  // Auto-load (cache-aware) when the list or key becomes available.
+  // Auto-load (cache-aware) when the list becomes available or changes.
   const sig = (items ?? []).map((i) => `${i.id}:${i.symbol}:${i.exchange ?? ''}`).join(',')
   useEffect(() => {
-    if (items && items.length && apikey) void load(items, apikey, false)
+    if (items && items.length) void load(items, false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sig, apikey])
+  }, [sig])
 
   const add = async () => {
     if (!draft?.symbol.trim()) return
@@ -113,15 +124,16 @@ export function Watchlist() {
     await deleteWatchItem(item.id)
   }
 
-  const hasKey = !!apikey
-
   return (
     <div className="space-y-5 max-w-2xl">
       <div className="flex items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold tracking-tight">Watchlist</h1>
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Watchlist</h1>
+          {lastUpdated && <p className="text-xs text-muted mt-0.5">Updated {asOfLabel(new Date(lastUpdated).getTime())}</p>}
+        </div>
         <div className="flex gap-2">
-          {(items?.length ?? 0) > 0 && hasKey && (
-            <Button variant="secondary" onClick={() => items && load(items, apikey, true)} disabled={refreshing}>
+          {(items?.length ?? 0) > 0 && (
+            <Button variant="secondary" onClick={() => items && load(items, true)} disabled={refreshing}>
               <IconRefresh width={18} className={refreshing ? 'animate-spin' : undefined} /> Refresh
             </Button>
           )}
@@ -129,24 +141,11 @@ export function Watchlist() {
         </div>
       </div>
 
-      {!hasKey && (
-        <Card className="p-4">
-          <div className="flex items-start gap-3">
-            <span className="text-muted mt-0.5"><IconTrend width={20} /></span>
-            <p className="text-sm text-muted leading-relaxed">
-              Add your free <b>Twelve Data</b> key in{' '}
-              <button onClick={() => navigate('/settings')} className="text-accent underline">Settings → Live prices</button>{' '}
-              to pull live quotes here. You can still add tickers now; prices appear once the key is set.
-            </p>
-          </div>
-        </Card>
-      )}
-
       {items && items.length === 0 ? (
         <EmptyState
           icon={<IconTrend width={32} />}
           title="No tickers yet"
-          message="Add stocks, ETFs, or crypto to watch their live prices."
+          message="Add stocks, ETFs, or crypto to watch their live prices — free, no setup."
           action={<Button onClick={() => setDraft({ symbol: '', exchange: '' })}><IconPlus width={18} /> Add a ticker</Button>}
         />
       ) : (
@@ -167,8 +166,8 @@ export function Watchlist() {
                   <p className="text-xs text-faint">
                     {s?.loading && !q ? 'Loading…'
                       : s?.error && !q ? <span className="text-negative">{s.error}</span>
-                      : q ? <span className={q.isMarketOpen ? 'text-positive' : 'text-faint'}>{q.isMarketOpen ? '● Open' : '○ Closed'}</span>
-                      : hasKey ? 'Tap Refresh to load' : 'Add a key to load'}
+                      : q ? `as of ${asOfLabel(q.asOf)}`
+                      : 'Tap Refresh to load'}
                   </p>
                 </div>
                 <div className="text-right">
@@ -196,8 +195,8 @@ export function Watchlist() {
       )}
 
       <p className="text-xs text-faint">
-        Live data from Twelve Data, refreshed on demand and cached briefly to stay within your plan. Prices are
-        shown in each market's own currency.
+        Live data from Yahoo Finance (free, no key) — refreshed on demand and cached briefly. Prices are shown
+        in each market's own currency.
       </p>
 
       {/* Add modal */}
@@ -223,8 +222,9 @@ export function Watchlist() {
               </Field>
             </div>
             <p className="text-xs text-muted">
-              US stocks work with just the symbol. For ASX or other markets, set the exchange so the right listing
-              is found. For crypto use a pair like <code className="text-fg">BTC/USD</code>.
+              US stocks work with just the symbol. For ASX use the symbol + exchange <code className="text-fg">ASX</code>{' '}
+              (or enter it Yahoo-style like <code className="text-fg">CBA.AX</code>). For crypto use a pair like{' '}
+              <code className="text-fg">BTC/USD</code>.
             </p>
           </div>
         )}
