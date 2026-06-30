@@ -1,5 +1,5 @@
 import { db } from './db'
-import type { Account, Budget, PaySplit, Recurring, Transaction } from '@/types/models'
+import type { Account, Budget, Holding, PaySplit, Recurring, Transaction } from '@/types/models'
 import { ymOf, addDaysISO, addMonthsISO } from '@/lib/date'
 import { uid } from '@/lib/cn'
 import { now, markChanged, markDeleted } from './changes'
@@ -315,6 +315,36 @@ export async function executePaySplit(x: PaySplitExecution): Promise<number> {
     created++
   }
   return created
+}
+
+/* --------------------------- Holdings ------------------------------- */
+
+export async function addHolding(
+  input: Omit<Holding, 'id' | 'createdAt' | 'updatedAt'>,
+): Promise<Holding> {
+  const ts = now()
+  const holding: Holding = { ...input, id: uid(), createdAt: new Date().toISOString(), updatedAt: ts }
+  await db.transaction('rw', db.holdings, db.outbox, async () => {
+    await db.holdings.add(holding)
+    await markChanged('holdings', holding.id, ts)
+  })
+  return holding
+}
+
+export async function updateHolding(id: string, patch: Partial<Holding>): Promise<void> {
+  const ts = now()
+  await db.transaction('rw', db.holdings, db.outbox, async () => {
+    await db.holdings.update(id, { ...patch, updatedAt: ts })
+    await markChanged('holdings', id, ts)
+  })
+}
+
+export async function deleteHolding(id: string): Promise<void> {
+  const ts = now()
+  await db.transaction('rw', db.holdings, db.outbox, async () => {
+    await db.holdings.delete(id)
+    await markDeleted('holdings', id, ts)
+  })
 }
 
 /* ------------------------- Rollup rebuild --------------------------- */

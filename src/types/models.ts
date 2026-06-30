@@ -107,6 +107,30 @@ export interface PaySplit extends Synced {
   allocations: Allocation[]
 }
 
+/**
+ * An investment holding (stock, fund, crypto, commodity, …). The app is
+ * local-first with no price feed, so `unitPriceMinor` is updated manually by
+ * the user. Current value = quantity × unitPrice; it counts toward Net Worth
+ * and Total Assets but NOT Spendable Cash (it isn't liquid).
+ */
+export type HoldingType = 'stock' | 'etf' | 'crypto' | 'commodity' | 'cash' | 'other'
+
+export interface Holding extends Synced {
+  id: string
+  name: string
+  /** Ticker / short symbol, e.g. AAPL, BTC, XAU. */
+  symbol?: string
+  type: HoldingType
+  /** Units/shares held (may be fractional). */
+  quantity: number
+  /** Current price per unit, in minor units. */
+  unitPriceMinor: number
+  /** Total amount invested (minor units), for gain/loss. Optional. */
+  costBasisMinor?: number
+  note?: string
+  createdAt: string
+}
+
 /* ---- Rollup tables (derived, maintained atomically on every write) ---- */
 
 export interface AccountRollup {
@@ -145,6 +169,7 @@ export const SYNCED_TABLES = [
   'budgets',
   'recurring',
   'paySplits',
+  'holdings',
 ] as const
 export type SyncedTable = (typeof SYNCED_TABLES)[number]
 

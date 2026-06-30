@@ -8,6 +8,9 @@ import {
   deleteTransaction,
   upsertBudget,
   executePaySplit,
+  addHolding,
+  updateHolding,
+  deleteHolding,
   rebuildRollups,
 } from './repo'
 import { currentYm } from '@/lib/date'
@@ -22,6 +25,7 @@ async function reset() {
     db.accounts.clear(), db.categories.clear(), db.transactions.clear(),
     db.budgets.clear(), db.recurring.clear(), db.meta.clear(),
     db.accountRollup.clear(), db.monthlyStats.clear(), db.categoryMonthly.clear(),
+    db.paySplits.clear(), db.holdings.clear(), db.outbox.clear(),
   ])
 }
 
@@ -138,6 +142,19 @@ describe('repository rollups', () => {
     const stat = await db.monthlyStats.get(currentYm())
     expect(stat?.incomeMinor).toBe(1000_00)
     expect(stat?.expenseMinor ?? 0).toBe(0)
+  })
+
+  it('holdings: add/update/delete stamp updatedAt and queue for sync', async () => {
+    const h = await addHolding({ name: 'Apple', symbol: 'AAPL', type: 'stock', quantity: 10, unitPriceMinor: 150_00, costBasisMinor: 1200_00 })
+    expect((await db.holdings.get(h.id))?.updatedAt).toBeGreaterThan(0)
+    expect(await db.outbox.get(`holdings:${h.id}`)).toMatchObject({ deleted: false })
+
+    await updateHolding(h.id, { unitPriceMinor: 180_00 })
+    expect((await db.holdings.get(h.id))?.unitPriceMinor).toBe(180_00)
+
+    await deleteHolding(h.id)
+    expect(await db.holdings.get(h.id)).toBeUndefined()
+    expect(await db.outbox.get(`holdings:${h.id}`)).toMatchObject({ deleted: true })
   })
 
   it('budget upsert replaces and removes on zero', async () => {

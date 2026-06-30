@@ -2,6 +2,7 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/db/db'
 import { isLiability, type Account } from '@/types/models'
 import { currentYm, recentYms } from '@/lib/date'
+import { valueHolding, holdingValueMinor } from '@/lib/portfolio'
 
 /** All accounts with their live derived balance (opening + rollup delta). */
 export function useAccountsWithBalances() {
@@ -23,24 +24,45 @@ export interface BalanceTotals {
   spendableCashMinor: number
   totalAssetsMinor: number
   totalLiabilitiesMinor: number
+  investmentsMinor: number
 }
 
 export function useBalanceTotals(): BalanceTotals | undefined {
   const accounts = useAccountsWithBalances()
-  if (!accounts) return undefined
-  let assets = 0
+  const investmentsMinor = useInvestmentsTotal()
+  if (!accounts || investmentsMinor === undefined) return undefined
+  let cash = 0
   let liabilities = 0
   for (const a of accounts) {
     if (a.archived) continue
     if (isLiability(a.type)) liabilities += -a.balanceMinor // balance is negative when owed
-    else assets += a.balanceMinor
+    else cash += a.balanceMinor
   }
+  // Investments are assets and count toward Net Worth, but are NOT spendable cash.
+  const assets = cash + investmentsMinor
   return {
     netWorthMinor: assets - liabilities,
-    spendableCashMinor: assets,
+    spendableCashMinor: cash,
     totalAssetsMinor: assets,
     totalLiabilitiesMinor: liabilities,
+    investmentsMinor,
   }
+}
+
+/** Total current value of all investment holdings, in minor units. */
+export function useInvestmentsTotal(): number | undefined {
+  return useLiveQuery(async () => {
+    const holdings = await db.holdings.toArray()
+    return holdings.reduce((s, h) => s + holdingValueMinor(h.quantity, h.unitPriceMinor), 0)
+  }, [])
+}
+
+/** Holdings with computed value/gain, sorted by value descending. */
+export function useHoldings() {
+  return useLiveQuery(async () => {
+    const holdings = await db.holdings.toArray()
+    return holdings.map(valueHolding).sort((a, b) => b.valueMinor - a.valueMinor)
+  }, [])
 }
 
 export function useMonthlyStat(ym = currentYm()) {

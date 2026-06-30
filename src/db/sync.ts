@@ -33,6 +33,7 @@ const TABLE_OF = {
   budgets: db.budgets,
   recurring: db.recurring,
   paySplits: db.paySplits,
+  holdings: db.holdings,
 } as unknown as Record<SyncedTable, Table<Row, string>>
 
 interface RemoteRecord {
@@ -70,7 +71,7 @@ async function pull(userId: string): Promise<number> {
     const rows = (data ?? []) as RemoteRecord[]
     if (rows.length === 0) break
 
-    await db.transaction('rw', [db.accounts, db.categories, db.transactions, db.budgets, db.recurring, db.paySplits], async () => {
+    await db.transaction('rw', [db.accounts, db.categories, db.transactions, db.budgets, db.recurring, db.paySplits, db.holdings], async () => {
       for (const rec of rows) {
         const table = TABLE_OF[rec.tbl]
         if (!table) continue

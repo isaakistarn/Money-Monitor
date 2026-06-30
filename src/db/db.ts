@@ -6,6 +6,7 @@ import type {
   Budget,
   Recurring,
   PaySplit,
+  Holding,
   AccountRollup,
   MonthlyStat,
   CategoryMonthly,
@@ -25,6 +26,7 @@ export class FinanceDB extends Dexie {
   meta!: Table<Meta, string>
   outbox!: Table<OutboxEntry, string>
   paySplits!: Table<PaySplit, string>
+  holdings!: Table<Holding, string>
 
   constructor() {
     super('finance-tracker')
@@ -69,6 +71,11 @@ export class FinanceDB extends Dexie {
     // v3 adds reusable paycheck-split templates (synced like other entities).
     this.version(3).stores({
       paySplits: 'id, name, updatedAt',
+    })
+
+    // v4 adds the investment portfolio (stocks, crypto, commodities, …).
+    this.version(4).stores({
+      holdings: 'id, type, name, updatedAt',
     })
   }
 }

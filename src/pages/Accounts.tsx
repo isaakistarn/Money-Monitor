@@ -6,6 +6,7 @@ import { Modal } from '@/components/ui/Modal'
 import { Field, Input, Select } from '@/components/ui/Field'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { useConfirm } from '@/components/ui/Confirm'
+import { Portfolio } from '@/components/Portfolio'
 import { IconWallet, IconPlus, IconTrash } from '@/components/ui/icons'
 import { useAccountsWithBalances, useBalanceTotals } from '@/hooks/useData'
 import { useCurrency } from '@/state/settings'
@@ -140,6 +141,9 @@ export function Accounts() {
           )}
         </>
       )}
+
+      {/* Investment portfolio (counts toward Net Worth, not Spendable Cash) */}
+      <Portfolio />
 
       {/* Editor */}
       <Modal
