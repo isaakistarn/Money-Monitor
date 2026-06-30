@@ -324,11 +324,13 @@ export function PaySplitModal({
                         </button>
                       </div>
                       <div className="flex gap-2 items-center">
-                        <Select value={a.mode} onChange={(e) => setAlloc(a.id, { mode: e.target.value as AllocationMode })} className="w-28">
-                          <option value="percent">Percent</option>
-                          <option value="fixed">Amount</option>
-                        </Select>
-                        <div className="relative flex-1">
+                        <div className="w-28 shrink-0">
+                          <Select value={a.mode} onChange={(e) => setAlloc(a.id, { mode: e.target.value as AllocationMode })}>
+                            <option value="percent">Percent</option>
+                            <option value="fixed">Amount</option>
+                          </Select>
+                        </div>
+                        <div className="relative flex-1 min-w-0">
                           <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted text-sm pointer-events-none">
                             {a.mode === 'percent' ? '%' : currencySymbol(currency)}
                           </span>
