@@ -3,9 +3,11 @@ import { createHashRouter, RouterProvider } from 'react-router-dom'
 import { SettingsProvider, useSettings } from '@/state/settings'
 import { UIProvider } from '@/state/ui'
 import { SyncProvider } from '@/state/sync'
+import { UpdateProvider } from '@/state/update'
 import { ConfirmProvider } from '@/components/ui/Confirm'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { TransactionForm } from '@/components/transactions/TransactionForm'
+import { UpdateBanner } from '@/components/UpdateBanner'
 import { Toaster } from '@/components/ui/Toaster'
 import { useKeyboardShortcuts } from '@/hooks/useKeyboard'
 import { bootstrap } from '@/db/seed'
@@ -42,6 +44,7 @@ function RootLayout() {
     <>
       <AppLayout />
       <TransactionForm />
+      <UpdateBanner />
       <Toaster />
       {checked && needsOnboarding && <Onboarding onDone={() => setNeedsOnboarding(false)} />}
     </>
@@ -75,13 +78,15 @@ export default function App() {
   return (
     <SettingsProvider>
       <UIProvider>
-        <SyncProvider>
-          <ConfirmProvider>
-            <Gate>
-              <RouterProvider router={router} />
-            </Gate>
-          </ConfirmProvider>
-        </SyncProvider>
+        <UpdateProvider>
+          <SyncProvider>
+            <ConfirmProvider>
+              <Gate>
+                <RouterProvider router={router} />
+              </Gate>
+            </ConfirmProvider>
+          </SyncProvider>
+        </UpdateProvider>
       </UIProvider>
     </SettingsProvider>
   )

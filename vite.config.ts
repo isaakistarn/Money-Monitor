@@ -29,7 +29,9 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: 'autoUpdate',
+      // 'prompt' so a new deploy waits for the user to apply it via the in-app
+      // update button, instead of silently swapping under them.
+      registerType: 'prompt',
       includeAssets: ['icons/apple-touch-icon.png', 'favicon.svg'],
       manifest: {
         name: 'Money Monitor',

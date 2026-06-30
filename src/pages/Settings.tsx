@@ -4,9 +4,11 @@ import { Button } from '@/components/ui/Button'
 import { Select } from '@/components/ui/Field'
 import { Segmented } from '@/components/ui/Segmented'
 import { useConfirm } from '@/components/ui/Confirm'
-import { IconDownload, IconUpload, IconTrash, IconSun, IconMoon, IconSettings, IconShield } from '@/components/ui/icons'
+import { IconDownload, IconUpload, IconTrash, IconSun, IconMoon, IconSettings, IconShield, IconRefresh } from '@/components/ui/icons'
 import { useSettings, type ThemeMode } from '@/state/settings'
 import { useUI } from '@/state/ui'
+import { useUpdate } from '@/state/update'
+import { versionLabel } from '@/lib/version'
 import { CURRENCIES } from '@/lib/money'
 import { exportBackup, importBackup, clearAllData } from '@/db/backup'
 import { seedSampleData } from '@/db/seed'
@@ -33,6 +35,7 @@ function Row({ label, hint, children }: { label: string; hint?: string; children
 export function Settings() {
   const { theme, setTheme, currency, setCurrency } = useSettings()
   const { toast } = useUI()
+  const update = useUpdate()
   const confirm = useConfirm()
   const fileRef = useRef<HTMLInputElement>(null)
   const txCount = useTotalTransactionCount()
@@ -219,7 +222,26 @@ export function Settings() {
         )}
       </Card>
 
-      <p className="text-center text-xs text-faint pb-4">Money Monitor · local-first · v1.0</p>
+      {/* About / version */}
+      <Card className="p-5">
+        <SectionHeader title="About" />
+        <Row label="Version" hint={update.updateAvailable ? 'A new version is ready to install.' : 'You’re on the latest version.'}>
+          {update.updateAvailable ? (
+            <Button size="sm" onClick={update.updateNow} disabled={update.updating}>
+              <IconRefresh width={15} className={update.updating ? 'animate-spin' : undefined} />
+              {update.updating ? 'Updating…' : 'Update now'}
+            </Button>
+          ) : (
+            <Button size="sm" variant="secondary" onClick={() => update.checkForUpdates()} disabled={update.checking}>
+              <IconRefresh width={15} className={update.checking ? 'animate-spin' : undefined} />
+              {update.checking ? 'Checking…' : 'Check for updates'}
+            </Button>
+          )}
+        </Row>
+        <p className="text-xs text-faint">{versionLabel}</p>
+      </Card>
+
+      <p className="text-center text-xs text-faint pb-4">Money Monitor · local-first · {versionLabel}</p>
     </div>
   )
 }
