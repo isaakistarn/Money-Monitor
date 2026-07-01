@@ -6,6 +6,8 @@ import { Modal } from '@/components/ui/Modal'
 import { Field, Input } from '@/components/ui/Field'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Sparkline } from '@/components/ui/Sparkline'
+import { PriceChart } from '@/components/watchlist/PriceChart'
+import { TickerLogo } from '@/components/watchlist/TickerLogo'
 import { useConfirm } from '@/components/ui/Confirm'
 import { IconTrend, IconPlus, IconTrash, IconRefresh, IconArrowUp, IconArrowDown, IconSearch } from '@/components/ui/icons'
 import { useWatchlist } from '@/hooks/useData'
@@ -19,18 +21,21 @@ interface QState {
   loading?: boolean
   data?: FullQuote
   closes?: number[]
+  times?: number[]
   error?: string
 }
 
-const cache = new Map<string, { q: FullQuote; closes: number[]; at: number }>()
+const cache = new Map<string, { q: FullQuote; closes: number[]; times: number[]; at: number }>()
 const TTL = 60_000
 const keyOf = (i: WatchItem) => `${i.symbol}|${i.exchange ?? ''}`
 
 const RANGES = [
-  { key: '1M', range: '1mo', interval: '1d' },
-  { key: '6M', range: '6mo', interval: '1d' },
-  { key: '1Y', range: '1y', interval: '1wk' },
-  { key: '5Y', range: '5y', interval: '1mo' },
+  { key: '1D', range: '1d', interval: '5m', intraday: true },
+  { key: '1W', range: '5d', interval: '30m', intraday: true },
+  { key: '1M', range: '1mo', interval: '1d', intraday: false },
+  { key: '6M', range: '6mo', interval: '1d', intraday: false },
+  { key: '1Y', range: '1y', interval: '1wk', intraday: false },
+  { key: '5Y', range: '5y', interval: '1mo', intraday: false },
 ]
 
 function nativeMoney(price: number, currency: string): string {
@@ -77,6 +82,7 @@ interface Detail {
   rangeKey: string
   quote?: FullQuote
   closes?: number[]
+  times?: number[]
   loading?: boolean
   error?: string
 }
@@ -134,17 +140,17 @@ export function Watchlist() {
         const ck = keyOf(item)
         const cached = cache.get(ck)
         if (!force && cached && Date.now() - cached.at < TTL) {
-          setQ(item.id, { data: cached.q, closes: cached.closes })
+          setQ(item.id, { data: cached.q, closes: cached.closes, times: cached.times })
           continue
         }
-        setQ(item.id, { loading: true, data: cached?.q, closes: cached?.closes })
+        setQ(item.id, { loading: true, data: cached?.q, closes: cached?.closes, times: cached?.times })
         try {
           const r = await fetchYahooSeries(yahooSymbol(item.symbol, item.exchange), '1mo', '1d')
-          cache.set(ck, { q: r.quote, closes: r.closes, at: Date.now() })
-          setQ(item.id, { data: r.quote, closes: r.closes })
+          cache.set(ck, { q: r.quote, closes: r.closes, times: r.times, at: Date.now() })
+          setQ(item.id, { data: r.quote, closes: r.closes, times: r.times })
           fetched = true
         } catch (e) {
-          setQ(item.id, { error: (e as Error).message, data: cached?.q, closes: cached?.closes })
+          setQ(item.id, { error: (e as Error).message, data: cached?.q, closes: cached?.closes, times: cached?.times })
           if (e instanceof RateLimitError) {
             toast(e.message, 'error')
             break
@@ -166,7 +172,7 @@ export function Watchlist() {
 
   const openDetail = (item: WatchItem) => {
     const s = quotes[item.id]
-    setDetail({ item, rangeKey: '1M', quote: s?.data, closes: s?.closes })
+    setDetail({ item, rangeKey: '1M', quote: s?.data, closes: s?.closes, times: s?.times })
     if (!s?.closes) void loadDetail(item, '1M')
   }
 
@@ -175,7 +181,7 @@ export function Watchlist() {
     setDetail((d) => (d && d.item.id === item.id ? { ...d, rangeKey, loading: true, error: undefined } : d))
     try {
       const r = await fetchYahooSeries(yahooSymbol(item.symbol, item.exchange), cfg.range, cfg.interval)
-      setDetail((d) => (d && d.item.id === item.id ? { ...d, rangeKey, quote: r.quote, closes: r.closes, loading: false } : d))
+      setDetail((d) => (d && d.item.id === item.id ? { ...d, rangeKey, quote: r.quote, closes: r.closes, times: r.times, loading: false } : d))
     } catch (e) {
       setDetail((d) => (d && d.item.id === item.id ? { ...d, rangeKey, loading: false, error: (e as Error).message } : d))
     }
@@ -230,9 +236,7 @@ export function Watchlist() {
               <Card key={item.id} className="p-3.5">
                 <div className="flex items-center gap-3">
                   <button onClick={() => openDetail(item)} className="flex items-center gap-3 flex-1 min-w-0 text-left">
-                    <span className="grid place-items-center h-10 w-10 rounded-full bg-elevated text-xs font-bold shrink-0">
-                      {item.symbol.slice(0, 4)}
-                    </span>
+                    <TickerLogo symbol={item.symbol} exchange={item.exchange} size={40} />
                     <span className="flex-1 min-w-0">
                       <span className="block font-medium text-sm truncate">
                         {q?.name || item.symbol}
@@ -361,24 +365,30 @@ export function Watchlist() {
               </p>
             </div>
 
-            <div className="h-44 rounded-xl bg-elevated/40 border border-border p-2">
+            <div className="h-56 rounded-xl bg-elevated/40 border border-border p-2 pr-1">
               {detail.loading && !detail.closes ? (
                 <div className="h-full w-full rounded bg-border/40 animate-pulse" />
               ) : detail.error && !detail.closes ? (
                 <div className="h-full grid place-items-center text-sm text-negative">{detail.error}</div>
-              ) : detail.closes && detail.closes.length > 1 ? (
-                <Sparkline values={detail.closes} strokeWidth={2} className={detailPct?.up ? 'text-positive' : 'text-negative'} />
+              ) : detail.closes && detail.times && detail.closes.length > 1 ? (
+                <PriceChart
+                  closes={detail.closes}
+                  times={detail.times}
+                  currency={detail.quote?.currency || 'USD'}
+                  up={!!detailPct?.up}
+                  intraday={RANGES.find((r) => r.key === detail.rangeKey)?.intraday ?? false}
+                />
               ) : (
                 <div className="h-full grid place-items-center text-sm text-muted">No chart data</div>
               )}
             </div>
 
-            <div className="flex gap-2">
+            <div className="flex gap-1.5">
               {RANGES.map((r) => (
                 <button
                   key={r.key}
                   onClick={() => loadDetail(detail.item, r.key)}
-                  className={`flex-1 h-9 rounded-lg text-sm font-medium transition-colors ${
+                  className={`flex-1 h-9 rounded-lg text-xs sm:text-sm font-medium transition-colors ${
                     detail.rangeKey === r.key ? 'bg-accent text-white' : 'bg-elevated text-muted hover:text-fg'
                   }`}
                 >

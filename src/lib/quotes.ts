@@ -97,8 +97,33 @@ export function cleanSeries(raw: Array<number | null>): number[] {
   return out
 }
 
+/**
+ * Like cleanSeries, but keeps each point's timestamp aligned with its price so
+ * the value and the time axis never drift apart. Yahoo gives times in seconds;
+ * we return epoch **milliseconds** ready for charting. Leading nulls (and their
+ * timestamps) are dropped together; interior gaps are forward-filled.
+ */
+export function alignSeries(
+  rawCloses: Array<number | null>,
+  rawTimes: number[],
+): { closes: number[]; times: number[] } {
+  const closes: number[] = []
+  const times: number[] = []
+  let last: number | null = null
+  for (let i = 0; i < rawCloses.length; i++) {
+    const v = rawCloses[i]
+    if (v != null && Number.isFinite(v)) last = v
+    if (last != null) {
+      closes.push(last)
+      times.push((rawTimes[i] ?? 0) * 1000)
+    }
+  }
+  return { closes, times }
+}
+
 interface ChartData {
   meta: YMeta
+  /** Epoch ms, aligned 1:1 with `closes`. */
   times: number[]
   closes: number[]
 }
@@ -123,11 +148,11 @@ async function yahooChart(yahoo: string, range = '1d', interval = '1d'): Promise
   if (j?.chart?.error) throw new Error(j.chart.error.description || 'Symbol not found.')
   const result = j?.chart?.result?.[0]
   if (!result?.meta) throw new Error('Symbol not found.')
-  return {
-    meta: result.meta,
-    times: result.timestamp ?? [],
-    closes: cleanSeries(result.indicators?.quote?.[0]?.close ?? []),
-  }
+  const { closes, times } = alignSeries(
+    result.indicators?.quote?.[0]?.close ?? [],
+    result.timestamp ?? [],
+  )
+  return { meta: result.meta, times, closes }
 }
 
 /** Full quote (price, day change, %) for a Yahoo symbol. */
@@ -138,6 +163,7 @@ export async function fetchYahooQuote(yahoo: string): Promise<FullQuote> {
 export interface QuoteWithSeries {
   quote: FullQuote
   closes: number[]
+  /** Epoch ms, aligned 1:1 with `closes`. */
   times: number[]
 }
 

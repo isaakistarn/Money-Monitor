@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { metaToQuote, yahooSymbol, cleanSeries, parseSearch } from './quotes'
+import { metaToQuote, yahooSymbol, cleanSeries, alignSeries, parseSearch } from './quotes'
 
 describe('yahoo chart meta → quote', () => {
   it('computes price, day change and percent from meta', () => {
@@ -79,5 +79,25 @@ describe('cleanSeries', () => {
     expect(cleanSeries([null, 10, null, 12, null])).toEqual([10, 10, 12, 12])
     expect(cleanSeries([1, 2, 3])).toEqual([1, 2, 3])
     expect(cleanSeries([null, null])).toEqual([])
+  })
+})
+
+describe('alignSeries', () => {
+  it('keeps timestamps aligned with prices and converts s→ms', () => {
+    // Leading null drops BOTH the price and its timestamp; interior null is
+    // forward-filled but keeps its own timestamp.
+    const r = alignSeries([null, 10, null, 12], [100, 200, 300, 400])
+    expect(r.closes).toEqual([10, 10, 12])
+    expect(r.times).toEqual([200_000, 300_000, 400_000])
+  })
+
+  it('closes stay identical to cleanSeries', () => {
+    const raw = [null, 5, 6, null, 8]
+    const times = [1, 2, 3, 4, 5]
+    expect(alignSeries(raw, times).closes).toEqual(cleanSeries(raw))
+  })
+
+  it('all-null yields empty arrays', () => {
+    expect(alignSeries([null, null], [1, 2])).toEqual({ closes: [], times: [] })
   })
 })
