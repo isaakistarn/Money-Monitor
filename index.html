@@ -2,6 +2,26 @@
 <html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
+    <!--
+      Content Security Policy (defense-in-depth). The app ships no inline scripts,
+      so script-src is locked to 'self' — this contains any XSS and, crucially for
+      a finance app, stops injected code from exfiltrating data or the Supabase
+      auth token (kept in localStorage) to an attacker-controlled host.
+      connect-src is the allow-list of everywhere the app is permitted to talk to:
+        · *.supabase.co  — cross-device sync + auth (REST + realtime websocket)
+        · corsproxy.io   — the keyless price/search proxy (Yahoo is only reached
+                           through it, never directly)
+      img-src adds the Financial Modeling Prep logo endpoint. 'unsafe-inline' is
+      needed only for styles (React/Chart.js set inline style attributes); scripts
+      get no such exception. Note: frame-ancestors / X-Frame-Options can't be set
+      from a <meta> tag on GitHub Pages — clickjacking protection would need real
+      response headers if the host ever supports them.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://financialmodelingprep.com; font-src 'self' data:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://corsproxy.io; worker-src 'self'; manifest-src 'self'"
+    />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
     <meta name="theme-color" content="#0a0a0a" media="(prefers-color-scheme: dark)" />
