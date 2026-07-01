@@ -77,7 +77,7 @@ export function Dashboard() {
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <SummaryCard label="Net Worth" minor={totals?.netWorthMinor} />
+        <SummaryCard label="Total Money" minor={totals?.netWorthMinor} />
         <SummaryCard label="Spendable Cash" minor={totals?.spendableCashMinor} />
         <SummaryCard label="Income this month" minor={month?.incomeMinor} tone="positive" />
         <SummaryCard label="Expenses this month" minor={month?.expenseMinor} tone="negative" />

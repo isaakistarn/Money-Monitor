@@ -23,6 +23,10 @@ export interface Account extends Synced {
   type: AccountType
   /** Opening balance in minor units (e.g. pence). For liabilities, a positive value = money owed. */
   openingBalanceMinor: number
+  /** When true, this asset account is left out of the Spendable Cash total (but
+   *  still counts toward Total Money / Total Assets). Ignored for liabilities.
+   *  Absent = included, so existing accounts keep counting. */
+  excludeFromSpendable?: boolean
   archived: boolean
   order: number
   createdAt: string

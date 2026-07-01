@@ -32,17 +32,23 @@ export function useBalanceTotals(): BalanceTotals | undefined {
   const investmentsMinor = useInvestmentsTotal()
   if (!accounts || investmentsMinor === undefined) return undefined
   let cash = 0
+  let spendable = 0
   let liabilities = 0
   for (const a of accounts) {
     if (a.archived) continue
-    if (isLiability(a.type)) liabilities += -a.balanceMinor // balance is negative when owed
-    else cash += a.balanceMinor
+    if (isLiability(a.type)) {
+      liabilities += -a.balanceMinor // balance is negative when owed
+    } else {
+      cash += a.balanceMinor
+      // Spendable Cash counts only the asset accounts the user opted in.
+      if (!a.excludeFromSpendable) spendable += a.balanceMinor
+    }
   }
-  // Investments are assets and count toward Net Worth, but are NOT spendable cash.
+  // Investments are assets and count toward Total Money, but are NOT spendable cash.
   const assets = cash + investmentsMinor
   return {
     netWorthMinor: assets - liabilities,
-    spendableCashMinor: cash,
+    spendableCashMinor: spendable,
     totalAssetsMinor: assets,
     totalLiabilitiesMinor: liabilities,
     investmentsMinor,

@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/Button'
 import { Select } from '@/components/ui/Field'
 import { Segmented } from '@/components/ui/Segmented'
 import { useConfirm } from '@/components/ui/Confirm'
-import { IconDownload, IconUpload, IconTrash, IconSun, IconMoon, IconSettings, IconShield, IconRefresh } from '@/components/ui/icons'
+import { IconDownload, IconUpload, IconTrash, IconSun, IconMoon, IconSettings, IconRefresh } from '@/components/ui/icons'
 import { useSettings, type ThemeMode } from '@/state/settings'
 import { useUI } from '@/state/ui'
 import { useUpdate } from '@/state/update'
@@ -129,14 +129,6 @@ export function Settings() {
       {/* Data & backup */}
       <Card className="p-5">
         <SectionHeader title="Data & Backup" />
-        <div className="rounded-xl bg-warning/5 border border-warning/30 p-3.5 flex gap-3 mb-3">
-          <span className="text-warning mt-0.5"><IconShield width={18} /></span>
-          <p className="text-xs text-muted leading-relaxed">
-            All data is stored only on this device — no servers, fully private. Browsers can clear local
-            storage (notably iOS after a period of disuse), so export a backup regularly.
-          </p>
-        </div>
-
         <Row label="Last backup" hint={`${txCount ?? 0} transactions stored`}>
           <span className="text-sm text-muted">{lastBackupLabel}</span>
         </Row>

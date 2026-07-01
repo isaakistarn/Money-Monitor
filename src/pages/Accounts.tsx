@@ -33,6 +33,7 @@ interface Draft {
   name: string
   type: AccountType
   opening: string
+  excludeFromSpendable: boolean
 }
 
 export function Accounts() {
@@ -53,6 +54,8 @@ export function Accounts() {
       name: draft.name.trim(),
       type: draft.type,
       openingBalanceMinor: Number.isFinite(openingMinor) ? openingMinor : 0,
+      // Only meaningful for assets; liabilities are never spendable cash.
+      excludeFromSpendable: isLiability(draft.type) ? false : draft.excludeFromSpendable,
     }
     if (draft.id) await updateAccount(draft.id, payload)
     else await addAccount(payload)
@@ -77,7 +80,7 @@ export function Accounts() {
     <Card
       key={a.id}
       className="p-4 flex items-center gap-3 cursor-pointer hover:border-accent/40 transition-colors"
-      onClick={() => setDraft({ id: a.id, name: a.name, type: a.type, opening: minorToInput(a.openingBalanceMinor, currency) })}
+      onClick={() => setDraft({ id: a.id, name: a.name, type: a.type, opening: minorToInput(a.openingBalanceMinor, currency), excludeFromSpendable: a.excludeFromSpendable ?? false })}
     >
       <span className="grid place-items-center h-10 w-10 rounded-full bg-elevated text-lg shrink-0">
         {TYPE_ICON[a.type]}
@@ -97,7 +100,7 @@ export function Accounts() {
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold tracking-tight">Accounts</h1>
-        <Button onClick={() => setDraft({ name: '', type: 'bank', opening: '' })}>
+        <Button onClick={() => setDraft({ name: '', type: 'bank', opening: '', excludeFromSpendable: false })}>
           <IconPlus width={18} /> Add
         </Button>
       </div>
@@ -113,7 +116,7 @@ export function Accounts() {
           <p className="text-lg md:text-xl font-bold mt-1 text-negative"><Money minor={totals?.totalLiabilitiesMinor ?? 0} /></p>
         </Card>
         <Card className="p-4">
-          <p className="text-xs text-muted">Net Worth</p>
+          <p className="text-xs text-muted">Total Money</p>
           <p className="text-lg md:text-xl font-bold mt-1"><Money minor={totals?.netWorthMinor ?? 0} /></p>
         </Card>
       </div>
@@ -123,7 +126,7 @@ export function Accounts() {
           icon={<IconWallet width={32} />}
           title="No accounts yet"
           message="Add a bank, cash, savings, or credit card account to begin."
-          action={<Button onClick={() => setDraft({ name: '', type: 'bank', opening: '' })}><IconPlus width={18} /> Add account</Button>}
+          action={<Button onClick={() => setDraft({ name: '', type: 'bank', opening: '', excludeFromSpendable: false })}><IconPlus width={18} /> Add account</Button>}
         />
       ) : (
         <>
@@ -183,6 +186,22 @@ export function Accounts() {
                 <Input value={draft.opening} onChange={(e) => setDraft({ ...draft, opening: e.target.value })} inputMode="decimal" placeholder="0.00" className="pl-8" />
               </div>
             </Field>
+            {!isLiability(draft.type) && (
+              <label className="flex items-start gap-2.5 text-sm cursor-pointer select-none rounded-xl border border-border p-3">
+                <input
+                  type="checkbox"
+                  checked={!draft.excludeFromSpendable}
+                  onChange={(e) => setDraft({ ...draft, excludeFromSpendable: !e.target.checked })}
+                  className="h-4 w-4 mt-0.5 accent-accent shrink-0"
+                />
+                <span>
+                  <span className="font-medium">Count toward Spendable Cash</span>
+                  <span className="block text-xs text-muted mt-0.5">
+                    Uncheck for accounts you don’t treat as ready-to-spend (e.g. savings). It still counts toward Total Money.
+                  </span>
+                </span>
+              </label>
+            )}
           </div>
         )}
       </Modal>
