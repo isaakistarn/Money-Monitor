@@ -13,6 +13,7 @@ import type {
   CategoryMonthly,
   Meta,
   OutboxEntry,
+  PortfolioSnapshot,
 } from '@/types/models'
 
 export class FinanceDB extends Dexie {
@@ -29,6 +30,7 @@ export class FinanceDB extends Dexie {
   paySplits!: Table<PaySplit, string>
   holdings!: Table<Holding, string>
   watchlist!: Table<WatchItem, string>
+  portfolioSnapshots!: Table<PortfolioSnapshot, string>
 
   constructor() {
     super('finance-tracker')
@@ -83,6 +85,12 @@ export class FinanceDB extends Dexie {
     // v5 adds the watchlist (tickers to follow; live data is fetched, not stored).
     this.version(5).stores({
       watchlist: 'id, order, updatedAt',
+    })
+
+    // v6 adds a device-local daily history of total portfolio value, used for
+    // the "portfolio value over time" chart. Derived history — NOT synced.
+    this.version(6).stores({
+      portfolioSnapshots: 'date',
     })
   }
 }

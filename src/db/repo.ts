@@ -15,7 +15,7 @@ type NewTransaction = Omit<Transaction, 'id' | 'ym' | 'createdAt'> &
   Partial<Pick<Transaction, 'id' | 'createdAt'>>
 
 /** Net signed effect of a transaction on a given account, in minor units. */
-function accountEffect(t: Transaction, accountId: string): number {
+export function accountEffect(t: Transaction, accountId: string): number {
   if (t.type === 'income' && t.accountId === accountId) return t.amountMinor
   if (t.type === 'expense' && t.accountId === accountId) return -t.amountMinor
   if (t.type === 'transfer') {

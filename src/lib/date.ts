@@ -56,6 +56,40 @@ export function recentYms(n: number): string[] {
   return out
 }
 
+/** Last N calendar days ending today (ISO), oldest first. */
+export function recentDays(n: number): string[] {
+  const out: string[] = []
+  const now = new Date()
+  for (let i = n - 1; i >= 0; i--) {
+    out.push(toISODate(new Date(now.getFullYear(), now.getMonth(), now.getDate() - i)))
+  }
+  return out
+}
+
+/** Monday-based week-start (ISO) for a given ISO date, in local time. */
+export function weekStartISO(isoDate: string): string {
+  const d = new Date(isoDate + 'T00:00:00')
+  const dow = (d.getDay() + 6) % 7 // Mon=0 … Sun=6
+  d.setDate(d.getDate() - dow)
+  return toISODate(d)
+}
+
+/** Last N week-start dates (Mondays) ending with this week, oldest first. */
+export function recentWeekStarts(n: number): string[] {
+  const thisWeek = weekStartISO(todayISO())
+  const out: string[] = []
+  for (let i = n - 1; i >= 0; i--) out.push(addDaysISO(thisWeek, -7 * i))
+  return out
+}
+
+/** Short day label, e.g. "5 Jul". */
+export function dayLabel(isoDate: string): string {
+  return new Date(isoDate + 'T00:00:00').toLocaleDateString(undefined, {
+    day: 'numeric',
+    month: 'short',
+  })
+}
+
 export function addDaysISO(isoDate: string, days: number): string {
   const d = new Date(isoDate + 'T00:00:00')
   d.setDate(d.getDate() + days)

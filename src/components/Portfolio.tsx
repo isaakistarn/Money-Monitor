@@ -12,9 +12,10 @@ import { useCurrency } from '@/state/settings'
 import { useUI } from '@/state/ui'
 import { addHolding, updateHolding, deleteHolding } from '@/db/repo'
 import { refreshHoldingPrices } from '@/db/prices'
+import { recordPortfolioSnapshot } from '@/db/history'
 import { getMeta } from '@/db/meta'
 import { parseMoney, minorToInput, currencySymbol, formatMoney } from '@/lib/money'
-import { holdingValueMinor, holdingGainMinor, gainPct } from '@/lib/portfolio'
+import { holdingValueMinor, holdingGainMinor, gainPct, costBasisOf } from '@/lib/portfolio'
 import type { Holding, HoldingType } from '@/types/models'
 
 const TYPE_LABELS: Record<HoldingType, string> = {
@@ -32,12 +33,13 @@ interface Draft {
   type: HoldingType
   quantity: string
   price: string
-  cost: string
+  /** Buy price per share/unit (what you paid), used for profit/loss. */
+  buyPrice: string
   note: string
 }
 
 function emptyDraft(): Draft {
-  return { name: '', symbol: '', exchange: '', type: 'stock', quantity: '', price: '', cost: '', note: '' }
+  return { name: '', symbol: '', exchange: '', type: 'stock', quantity: '', price: '', buyPrice: '', note: '' }
 }
 
 function Gain({ minor, pct }: { minor?: number; pct?: number }) {
@@ -112,8 +114,15 @@ export function Portfolio() {
   const totalValue = list.reduce((s, h) => s + h.valueMinor, 0)
   const hasCost = list.some((h) => h.gainMinor != null)
   const totalGain = list.reduce((s, h) => s + (h.gainMinor ?? 0), 0)
-  const totalCost = list.reduce((s, h) => s + (h.costBasisMinor ?? 0), 0)
+  const totalCost = list.reduce((s, h) => s + (costBasisOf(h) ?? 0), 0)
   const totalGainPct = totalCost > 0 ? (totalGain / totalCost) * 100 : undefined
+
+  // Record a daily snapshot of portfolio value so Analytics can chart it over
+  // time (keyed by date, so intraday updates just refresh today's point).
+  useEffect(() => {
+    if (!holdings || holdings.length === 0) return
+    void recordPortfolioSnapshot(totalValue, totalCost)
+  }, [holdings, totalValue, totalCost])
 
   const open = (h?: (typeof list)[number]) =>
     setDraft(
@@ -121,14 +130,25 @@ export function Portfolio() {
         ? {
             id: h.id, name: h.name, symbol: h.symbol ?? '', exchange: h.exchange ?? '', type: h.type,
             quantity: String(h.quantity), price: minorToInput(h.unitPriceMinor, currency),
-            cost: h.costBasisMinor != null ? minorToInput(h.costBasisMinor, currency) : '', note: h.note ?? '',
+            // Prefer the stored per-unit buy price; fall back to deriving it from
+            // a legacy total-invested amount so existing holdings edit cleanly.
+            buyPrice:
+              h.avgCostMinor != null
+                ? minorToInput(h.avgCostMinor, currency)
+                : h.costBasisMinor != null && h.quantity > 0
+                  ? minorToInput(Math.round(h.costBasisMinor / h.quantity), currency)
+                  : '',
+            note: h.note ?? '',
           }
         : emptyDraft(),
     )
 
   // Live preview of the holding currently being edited.
-  const draftValue = draft ? holdingValueMinor(Number(draft.quantity) || 0, parseMoney(draft.price, currency) || 0) : 0
-  const draftCost = draft && draft.cost.trim() ? parseMoney(draft.cost, currency) : undefined
+  const draftQty = draft ? Number(draft.quantity) || 0 : 0
+  const draftPrice = draft ? parseMoney(draft.price, currency) || 0 : 0
+  const draftValue = holdingValueMinor(draftQty, draftPrice)
+  const draftBuy = draft && draft.buyPrice.trim() ? parseMoney(draft.buyPrice, currency) : undefined
+  const draftCost = draftBuy != null && Number.isFinite(draftBuy) ? Math.round(draftQty * draftBuy) : undefined
   const draftGain = holdingGainMinor(draftValue, draftCost)
 
   const save = async () => {
@@ -137,7 +157,10 @@ export function Portfolio() {
     if (!Number.isFinite(quantity) || quantity <= 0) return toast('Enter a valid quantity.', 'error')
     const unitPriceMinor = parseMoney(draft.price, currency)
     if (!Number.isFinite(unitPriceMinor) || unitPriceMinor < 0) return toast('Enter a valid price.', 'error')
-    const costBasisMinor = draft.cost.trim() ? parseMoney(draft.cost, currency) : undefined
+    const avgCostMinor = draft.buyPrice.trim() ? parseMoney(draft.buyPrice, currency) : undefined
+    if (avgCostMinor != null && (!Number.isFinite(avgCostMinor) || avgCostMinor < 0))
+      return toast('Enter a valid buy price.', 'error')
+    const hasCost = avgCostMinor != null && Number.isFinite(avgCostMinor)
     const payload = {
       name: draft.name.trim(),
       symbol: draft.symbol.trim().toUpperCase() || undefined,
@@ -145,7 +168,10 @@ export function Portfolio() {
       type: draft.type,
       quantity,
       unitPriceMinor,
-      costBasisMinor: costBasisMinor != null && Number.isFinite(costBasisMinor) ? costBasisMinor : undefined,
+      // Store the per-unit buy price and keep the total cost basis in sync so
+      // every consumer (Net Worth, totals, gain/loss) stays consistent.
+      avgCostMinor: hasCost ? avgCostMinor : undefined,
+      costBasisMinor: hasCost ? Math.round(quantity * avgCostMinor!) : undefined,
       note: draft.note.trim() || undefined,
     }
     if (draft.id) await updateHolding(draft.id, payload)
@@ -291,19 +317,29 @@ export function Portfolio() {
                 </div>
               </Field>
             </div>
-            <Field label="Total invested (optional)" hint="Used to show gain/loss.">
+            <Field label="Buy price / share (optional)" hint="What you paid per share — compared to the live price for profit/loss.">
               <div className="relative">
                 <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none">{currencySymbol(currency)}</span>
-                <Input value={draft.cost} onChange={(e) => setDraft({ ...draft, cost: e.target.value })} inputMode="decimal" placeholder="0.00" className="pl-8" />
+                <Input value={draft.buyPrice} onChange={(e) => setDraft({ ...draft, buyPrice: e.target.value })} inputMode="decimal" placeholder="0.00" className="pl-8" />
               </div>
             </Field>
 
-            <div className="rounded-xl bg-elevated/60 border border-border p-3.5 flex items-center justify-between text-sm">
-              <span className="text-muted">Current value</span>
-              <span className="text-right">
-                <Money minor={draftValue} className="font-semibold" />
-                {draftGain != null && <div><Gain minor={draftGain} pct={gainPct(draftValue, draftCost)} /></div>}
-              </span>
+            <div className="rounded-xl bg-elevated/60 border border-border p-3.5 space-y-2 text-sm">
+              {draftBuy != null && (
+                <div className="flex items-center justify-between text-xs text-muted">
+                  <span>Per share</span>
+                  <span className="tabular-nums">
+                    {formatMoney(draftBuy, currency)} <span className="text-faint">→</span> {formatMoney(draftPrice, currency)}
+                  </span>
+                </div>
+              )}
+              <div className="flex items-center justify-between">
+                <span className="text-muted">Current value</span>
+                <span className="text-right">
+                  <Money minor={draftValue} className="font-semibold" />
+                  {draftGain != null && <div><Gain minor={draftGain} pct={gainPct(draftValue, draftCost)} /></div>}
+                </span>
+              </div>
             </div>
 
             <Field label="Note (optional)">

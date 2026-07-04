@@ -1,7 +1,8 @@
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/db/db'
+import { accountEffect } from '@/db/repo'
 import { isLiability, type Account } from '@/types/models'
-import { currentYm, recentYms } from '@/lib/date'
+import { currentYm, recentYms, recentDays, recentWeekStarts, weekStartISO, addDaysISO } from '@/lib/date'
 import { valueHolding, holdingValueMinor } from '@/lib/portfolio'
 
 /** All accounts with their live derived balance (opening + rollup delta). */
@@ -114,6 +115,104 @@ export function useMonthlyTrend(months = 6) {
       expenseMinor: map.get(ym)?.expenseMinor ?? 0,
     }))
   }, [months])
+}
+
+export interface DayPoint {
+  date: string
+  incomeMinor: number
+  expenseMinor: number
+}
+
+/** Income & expense totals bucketed by day over the last N days, oldest first. */
+export function useDailyTrend(days = 30) {
+  return useLiveQuery(async () => {
+    const dates = recentDays(days)
+    const rows = await db.transactions
+      .where('date')
+      .between(dates[0], dates[dates.length - 1], true, true)
+      .toArray()
+    const inc = new Map<string, number>()
+    const exp = new Map<string, number>()
+    for (const t of rows) {
+      if (t.excluded || t.type === 'transfer') continue
+      const m = t.type === 'income' ? inc : exp
+      m.set(t.date, (m.get(t.date) ?? 0) + t.amountMinor)
+    }
+    return dates.map<DayPoint>((d) => ({
+      date: d,
+      incomeMinor: inc.get(d) ?? 0,
+      expenseMinor: exp.get(d) ?? 0,
+    }))
+  }, [days])
+}
+
+export interface WeekPoint {
+  weekStart: string
+  incomeMinor: number
+  expenseMinor: number
+}
+
+/** Income & expense totals bucketed by ISO week (Mon-start) over N weeks. */
+export function useWeeklyTrend(weeks = 8) {
+  return useLiveQuery(async () => {
+    const starts = recentWeekStarts(weeks)
+    const end = addDaysISO(starts[starts.length - 1], 6)
+    const rows = await db.transactions.where('date').between(starts[0], end, true, true).toArray()
+    const inc = new Map<string, number>()
+    const exp = new Map<string, number>()
+    for (const t of rows) {
+      if (t.excluded || t.type === 'transfer') continue
+      const wk = weekStartISO(t.date)
+      const m = t.type === 'income' ? inc : exp
+      m.set(wk, (m.get(wk) ?? 0) + t.amountMinor)
+    }
+    return starts.map<WeekPoint>((w) => ({
+      weekStart: w,
+      incomeMinor: inc.get(w) ?? 0,
+      expenseMinor: exp.get(w) ?? 0,
+    }))
+  }, [weeks])
+}
+
+export interface BalancePoint {
+  date: string
+  balanceMinor: number
+}
+
+/**
+ * Running balance of one account at the end of each of the last N days.
+ * Walks the account's transactions in date order and carries the balance
+ * forward across days with no activity; the final point matches the account's
+ * current live balance.
+ */
+export function useAccountBalanceHistory(accountId: string | undefined, days = 30) {
+  return useLiveQuery(async () => {
+    if (!accountId) return undefined
+    const account = await db.accounts.get(accountId)
+    if (!account) return undefined
+    const txns = await db.transactions
+      .filter((t) => t.accountId === accountId || t.fromAccountId === accountId || t.toAccountId === accountId)
+      .toArray()
+    txns.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
+    let running = account.openingBalanceMinor * (isLiability(account.type) ? -1 : 1)
+    let i = 0
+    return recentDays(days).map<BalancePoint>((day) => {
+      while (i < txns.length && txns[i].date <= day) {
+        running += accountEffect(txns[i], accountId)
+        i++
+      }
+      return { date: day, balanceMinor: running }
+    })
+  }, [accountId, days])
+}
+
+/** Device-local daily portfolio-value history over the last N days, oldest first. */
+export function usePortfolioHistory(days = 90) {
+  return useLiveQuery(async () => {
+    const start = recentDays(days)[0]
+    const rows = await db.portfolioSnapshots.where('date').aboveOrEqual(start).toArray()
+    return rows.sort((a, b) => (a.date < b.date ? -1 : 1))
+  }, [days])
 }
 
 export function useRecentTransactions(limit = 10) {

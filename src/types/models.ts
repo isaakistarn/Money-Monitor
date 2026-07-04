@@ -134,10 +134,29 @@ export interface Holding extends Synced {
   quantity: number
   /** Current price per unit, in minor units. */
   unitPriceMinor: number
-  /** Total amount invested (minor units), for gain/loss. Optional. */
+  /** Total amount invested (minor units), for gain/loss. Optional. Legacy
+   *  holdings may carry only this; when `avgCostMinor` is set it is kept in sync
+   *  as quantity × avgCostMinor. */
   costBasisMinor?: number
+  /** Average buy price per unit (minor units) — the price you paid per share.
+   *  When set, the effective cost basis is quantity × avgCostMinor and the app
+   *  can show per-share profit/loss (buy price vs the live price). */
+  avgCostMinor?: number
   note?: string
   createdAt: string
+}
+
+/**
+ * A daily snapshot of total portfolio value, recorded locally as prices change.
+ * Device-local derived history (like the rollup tables) — NOT synced. Keyed by
+ * date so repeated updates within a day collapse to the latest value; the
+ * "portfolio value over time" chart reads this series.
+ */
+export interface PortfolioSnapshot {
+  /** ISO date (yyyy-mm-dd), local time. */
+  date: string
+  valueMinor: number
+  costMinor: number
 }
 
 /** A ticker the user follows on the Watchlist (live data is fetched, not stored). */

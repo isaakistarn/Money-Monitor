@@ -109,7 +109,59 @@ export function TrendLineChart({
   const options: ChartOptions<'line'> = {
     plugins: moneyTooltip(currency) as ChartOptions<'line'>['plugins'],
     scales: {
-      x: { grid: { display: false }, ticks: { color: tickColor, font: { size: 11 } } },
+      x: { grid: { display: false }, ticks: { color: tickColor, font: { size: 11 }, maxTicksLimit: 8, autoSkip: true } },
+      y: {
+        grid: { color: grid },
+        ticks: {
+          color: tickColor,
+          font: { size: 11 },
+          callback: (v) => formatMoney(Number(v), currency, { compact: true }),
+        },
+      },
+    },
+    maintainAspectRatio: false,
+    interaction: { mode: 'index', intersect: false },
+  }
+  return <Line data={data} options={options} />
+}
+
+/** A single-series area line — used for balances and portfolio value over time. */
+export function AreaLineChart({
+  labels,
+  values,
+  currency,
+  color = '#60a5fa',
+}: {
+  labels: string[]
+  values: number[]
+  currency: string
+  color?: string
+}) {
+  const theme = useThemeTick()
+  const grid = cssVar('--border', 0.6)
+  const tickColor = cssVar('--faint', 1)
+  const data = useMemo(
+    () => ({
+      labels,
+      datasets: [
+        {
+          data: values,
+          borderColor: color,
+          backgroundColor: `${color}20`,
+          fill: true,
+          tension: 0.3,
+          pointRadius: values.length > 45 ? 0 : 2,
+          borderWidth: 2,
+        },
+      ],
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [labels, values, theme, color],
+  )
+  const options: ChartOptions<'line'> = {
+    plugins: moneyTooltip(currency) as ChartOptions<'line'>['plugins'],
+    scales: {
+      x: { grid: { display: false }, ticks: { color: tickColor, font: { size: 11 }, maxTicksLimit: 8, autoSkip: true } },
       y: {
         grid: { color: grid },
         ticks: {
@@ -150,7 +202,7 @@ export function ComparisonBarChart({
   const options: ChartOptions<'bar'> = {
     plugins: moneyTooltip(currency) as ChartOptions<'bar'>['plugins'],
     scales: {
-      x: { grid: { display: false }, ticks: { color: tickColor, font: { size: 11 } } },
+      x: { grid: { display: false }, ticks: { color: tickColor, font: { size: 11 }, maxTicksLimit: 12, autoSkip: true } },
       y: {
         grid: { color: grid },
         ticks: {
