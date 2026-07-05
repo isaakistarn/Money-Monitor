@@ -10,7 +10,11 @@
       connect-src is the allow-list of everywhere the app is permitted to talk to:
         · *.supabase.co  — cross-device sync + auth (REST + realtime websocket)
         · corsproxy.io   — the keyless price/search proxy (Yahoo is only reached
-                           through it, never directly)
+                           through it, never directly). This is the fallback:
+                           when VITE_QUOTES_PROXY is set, the build replaces it
+                           here with your self-hosted worker's origin — strongly
+                           recommended, since an OPEN proxy in connect-src is an
+                           exfiltration route (see SECURITY.md).
       img-src adds the Financial Modeling Prep logo endpoint. 'unsafe-inline' is
       needed only for styles (React/Chart.js set inline style attributes); scripts
       get no such exception. Note: frame-ancestors / X-Frame-Options can't be set

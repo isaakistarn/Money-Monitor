@@ -123,6 +123,31 @@ change, on app focus, and every minute. There's also a **Sync now** button.
 
 ---
 
+## Part 3 — Self-hosted quote proxy (recommended)
+
+Live prices come from Yahoo Finance through a CORS proxy. Out of the box that's
+the public **corsproxy.io** — which works, but it's an *open* proxy: it sees
+every ticker you follow, could tamper with prices, and weakens the app's
+Content Security Policy (details in [`SECURITY.md`](./SECURITY.md)). Replacing
+it with your own takes ~5 minutes and is free:
+
+1. Sign in at [dash.cloudflare.com](https://dash.cloudflare.com) →
+   **Workers & Pages → Create → Worker**.
+2. Paste the contents of
+   [`proxy/cloudflare-worker.js`](./proxy/cloudflare-worker.js) (check
+   `ALLOWED_ORIGINS` matches your app URL) and **Deploy**.
+3. Copy the worker URL, e.g. `https://money-monitor-quotes.<you>.workers.dev`.
+4. On GitHub: **Settings → Secrets and variables → Actions → Variables → New
+   repository variable**:
+   - Name: `VITE_QUOTES_PROXY`
+   - Value: `https://money-monitor-quotes.<you>.workers.dev/?url=`
+5. Re-run the deploy workflow (or push anything). The build now routes quotes
+   through your worker **and** swaps corsproxy.io out of the CSP automatically.
+
+For local dev, add the same `VITE_QUOTES_PROXY=...` line to `.env.local`.
+
+---
+
 ## How sync works (and its limits)
 
 - Each change is recorded locally and pushed to Supabase; other devices pull it.

@@ -41,6 +41,10 @@ jobs:
           VITE_BASE: /${{ github.event.repository.name }}/
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          # Self-hosted quote proxy (repo Variables). When set, the build points
+          # quotes at it and swaps corsproxy.io out of the CSP. See
+          # proxy/cloudflare-worker.js for the 5-minute setup.
+          VITE_QUOTES_PROXY: ${{ vars.VITE_QUOTES_PROXY }}
         run: npm run build
 
       - name: Setup Pages

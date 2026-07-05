@@ -9,6 +9,22 @@ import { fileURLToPath, URL } from 'node:url'
 // The CI workflow sets VITE_BASE automatically from the repository name.
 const base = process.env.VITE_BASE || '/'
 
+// When a self-hosted quote proxy is configured (VITE_QUOTES_PROXY, see
+// proxy/cloudflare-worker.js), swap the public corsproxy.io fallback out of the
+// CSP connect-src at build time. This is what closes the CSP's exfiltration
+// hole: your worker only forwards to Yahoo, while corsproxy.io forwards
+// anywhere — allow-listing an open proxy defeats the point of connect-src.
+const quotesProxy = process.env.VITE_QUOTES_PROXY
+function cspQuotesProxy() {
+  return {
+    name: 'csp-quotes-proxy',
+    transformIndexHtml(html: string) {
+      if (!quotesProxy) return html
+      return html.replace('https://corsproxy.io', new URL(quotesProxy).origin)
+    },
+  }
+}
+
 export default defineConfig({
   base,
   resolve: {
@@ -18,15 +34,21 @@ export default defineConfig({
     chunkSizeWarningLimit: 700,
     rollupOptions: {
       output: {
-        manualChunks: {
-          react: ['react', 'react-dom', 'react-router-dom'],
-          charts: ['chart.js', 'react-chartjs-2'],
-          db: ['dexie', 'dexie-react-hooks'],
+        // Vite 8 (rolldown) only accepts the function form. Match charts/db
+        // before react — "react-chartjs-2" would otherwise land in the react
+        // chunk.
+        manualChunks(id: string) {
+          if (!id.includes('node_modules')) return undefined
+          if (/[\\/](chart\.js|react-chartjs-2|@kurkle)[\\/]/.test(id)) return 'charts'
+          if (/[\\/](dexie|dexie-react-hooks)[\\/]/.test(id)) return 'db'
+          if (/[\\/](react|react-dom|react-router|react-router-dom|scheduler)[\\/]/.test(id)) return 'react'
+          return undefined
         },
       },
     },
   },
   plugins: [
+    cspQuotesProxy(),
     react(),
     VitePWA({
       // 'prompt' so a new deploy waits for the user to apply it via the in-app

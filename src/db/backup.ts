@@ -2,6 +2,7 @@ import { db } from './db'
 import { rebuildRollups } from './repo'
 import { setMeta } from './meta'
 import { now, markChanged } from './changes'
+import { encryptBackupJson, decryptBackupJson, isEncryptedBackup } from './cryptobackup'
 import { todayISO } from '@/lib/date'
 import { SYNCED_TABLES, type Account, type Budget, type Category, type Holding, type PaySplit, type Recurring, type Transaction, type WatchItem } from '@/types/models'
 
@@ -84,11 +85,17 @@ function sanitizeRows<T extends { id: string }>(rows: unknown, table: string): {
   return { rows: out, dropped }
 }
 
-/** Export to a JSON file. Uses the File System Access API when available, else a download. */
-export async function exportBackup(): Promise<void> {
+/**
+ * Export to a JSON file. Uses the File System Access API when available, else
+ * a download. With a passphrase the file is AES-GCM encrypted — backups hold
+ * your entire financial history in the clear otherwise, which matters the
+ * moment one lands in a cloud drive or email.
+ */
+export async function exportBackup(passphrase?: string): Promise<void> {
   const backup = await buildBackup()
-  const json = JSON.stringify(backup, null, 2)
-  const filename = `money-monitor-backup-${todayISO()}.json`
+  let json = JSON.stringify(backup, null, 2)
+  if (passphrase) json = JSON.stringify(await encryptBackupJson(json, passphrase), null, 2)
+  const filename = `money-monitor-backup-${todayISO()}${passphrase ? '.encrypted' : ''}.json`
 
   const anyWindow = window as unknown as {
     showSaveFilePicker?: (opts: unknown) => Promise<{
@@ -126,13 +133,30 @@ export async function markBackedUp(): Promise<void> {
   await setMeta('lastBackup', new Date().toISOString())
 }
 
+/** True when the file is an encrypted backup, so the UI can ask for its passphrase. */
+export function backupNeedsPassphrase(text: string): boolean {
+  try {
+    return isEncryptedBackup(JSON.parse(text))
+  } catch {
+    return false
+  }
+}
+
 /** Replace all data with the contents of a backup file, then rebuild rollups. */
-export async function importBackup(text: string): Promise<{ transactions: number; dropped: number }> {
+export async function importBackup(text: string, passphrase?: string): Promise<{ transactions: number; dropped: number }> {
   let parsed: unknown
   try {
     parsed = JSON.parse(text)
   } catch {
     throw new Error('That file is not valid JSON.')
+  }
+  if (isEncryptedBackup(parsed)) {
+    if (!passphrase) throw new Error('This backup is encrypted — enter its passphrase.')
+    try {
+      parsed = JSON.parse(await decryptBackupJson(parsed, passphrase))
+    } catch (e) {
+      throw e instanceof Error ? e : new Error('Could not decrypt that backup.')
+    }
   }
   if (!isBackup(parsed)) {
     throw new Error('This does not look like a Money Monitor backup.')

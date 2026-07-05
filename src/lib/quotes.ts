@@ -1,15 +1,21 @@
 /**
- * Live quotes via Yahoo Finance, proxied through corsproxy.io so the browser
- * can reach it (Yahoo doesn't send CORS headers). Keyless and free, covering US,
- * ASX, and other markets plus crypto and FX. A light throttle keeps us polite to
- * the public proxy.
+ * Live quotes via Yahoo Finance, reached through a CORS proxy (Yahoo doesn't
+ * send CORS headers). Keyless and free, covering US, ASX, and other markets
+ * plus crypto and FX. A light throttle keeps us polite to the proxy.
+ *
+ * SECURITY: prefer a SELF-HOSTED proxy via VITE_QUOTES_PROXY (see
+ * proxy/cloudflare-worker.js + DEPLOY.md). The public corsproxy.io fallback is
+ * an *open* proxy: it sees every ticker you follow, could rewrite prices, and
+ * — because it must be allow-listed in the CSP — gives injected code an
+ * exfiltration route. The build swaps the CSP entry automatically when
+ * VITE_QUOTES_PROXY is set (vite.config.ts).
  *
  * Symbols use Yahoo conventions: US `AAPL`, ASX `CBA.AX`, crypto `BTC-USD`,
  * FX `USDAUD=X`. The yahooSymbol() helper builds these from a plain
  * symbol + exchange.
  */
 
-const PROXY = 'https://corsproxy.io/?url='
+const PROXY = import.meta.env.VITE_QUOTES_PROXY || 'https://corsproxy.io/?url='
 const CHART = 'https://query1.finance.yahoo.com/v8/finance/chart/'
 const SEARCH = 'https://query1.finance.yahoo.com/v1/finance/search'
 

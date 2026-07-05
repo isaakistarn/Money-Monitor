@@ -3,6 +3,10 @@
 _Reviewed: 2026-07-05 (v1.7.0). Full-app review: client code, sync engine, Supabase schema,
 CSP, PWA/service worker, CI, and dependencies._
 
+_Remediation shipped: v1.8.0 (code hardening) and v1.9.0 (proxy plumbing, encrypted
+backups, toolchain). Everything fixable from this repo is done; the three ⚠️ rows in the
+table at the bottom need your Supabase/Cloudflare/GitHub dashboards._
+
 ## Threat model
 
 Money Monitor is a local-first PWA. Financial data lives in the browser's IndexedDB and
@@ -34,24 +38,14 @@ and `index.html`'s CSP allow-lists it in `connect-src`. Three consequences:
   misrepresent your portfolio value.
 - **Privacy.** Your IP + every ticker you hold or watch goes to an unvetted third party.
 
-**Fix path:** self-host a ~20-line proxy that only forwards to `query1.finance.yahoo.com`
-(Cloudflare Worker free tier, or a Supabase Edge Function since a Supabase project already
-exists). Then point `PROXY` in `src/lib/quotes.ts` at it and replace `https://corsproxy.io`
-in the CSP with your worker origin. This closes the CSP hole (your worker is not an open
-redirect), removes the third party, and pins integrity to Yahoo + your own code.
-
-Example worker:
-
-```js
-export default {
-  async fetch(req) {
-    const target = new URL(new URL(req.url).searchParams.get('url') ?? '')
-    if (!['query1.finance.yahoo.com'].includes(target.hostname)) return new Response('forbidden', { status: 403 })
-    const res = await fetch(target, { headers: { accept: 'application/json' } })
-    return new Response(res.body, { status: res.status, headers: { 'content-type': 'application/json', 'access-control-allow-origin': 'https://isaakistarn.github.io' } })
-  },
-}
-```
+**Fix path (plumbing shipped in v1.9.0 — one 5-minute manual step left):** the repo now
+ships a ready-to-deploy worker at `proxy/cloudflare-worker.js` that only forwards to
+Yahoo's quote hosts and only answers your app's origins. Deploy it (Cloudflare free tier),
+then set the repo Actions **variable** `VITE_QUOTES_PROXY` to
+`https://<your-worker>/?url=` — full steps in DEPLOY.md Part 3. The build then routes all
+quotes through your worker AND swaps corsproxy.io out of the CSP automatically
+(`vite.config.ts` `cspQuotesProxy`); verified both ways in the built output. Until the
+variable is set, the app falls back to corsproxy.io and this finding remains open.
 
 ### HIGH — Supabase project accepts open sign-ups with weak defaults
 
@@ -126,19 +120,20 @@ through the proxy — so those hosts learn which tickers you follow, tied to you
 to fetching live data without your own backend; the self-hosted worker (finding #1) at least
 consolidates it to Yahoo + your worker. No action needed beyond awareness.
 
-### LOW — plaintext backups
+### LOW — plaintext backups ✅ fixed in v1.9.0
 
-Exported backups are unencrypted JSON of your entire financial history; anyone with the file
-reads it all. **Roadmap:** optional passphrase-encrypted export (WebCrypto AES-GCM with a
-PBKDF2/Argon2-derived key) — worth adding before backups are ever stored in cloud drives.
+Exported backups were unencrypted JSON of your entire financial history. The export dialog
+now takes an optional passphrase: the file is encrypted with AES-256-GCM under a
+PBKDF2-SHA-256 key (600k iterations, fresh salt + IV per export; `src/db/cryptobackup.ts`).
+GCM authenticates the ciphertext, so a tampered file fails closed instead of importing
+garbage. Import detects encrypted backups and prompts for the passphrase. There is no
+recovery for a lost passphrase — that's the point.
 
-### LOW — dependency audit: dev-tooling only
+### LOW — dependency audit ✅ fixed in v1.9.0
 
-`npm audit --omit=dev`: **0 vulnerabilities** — nothing that ships to users is affected.
-Dev-chain advisories (esbuild ≤0.24.2 dev-server request forwarding, vite path traversal,
-vitest UI RCE) apply only to local dev servers. Practical guidance: don't run `npm run dev`
-or the vitest UI while browsing untrusted sites; upgrade to vite 8 / vitest 4 (breaking
-majors) when convenient.
+Was: dev-chain advisories in esbuild/vite/vitest (dev-server only; the shipped bundle was
+never affected). The toolchain is now vite 8 / vitest 4 / @vitejs/plugin-react 6 /
+vite-plugin-pwa 1.3 — `npm audit`: **0 vulnerabilities** across all dependencies.
 
 ### Verified sound (no action)
 
@@ -156,12 +151,12 @@ majors) when convenient.
 
 ## Prioritized remediation path
 
-| # | Action | Where | Effort |
+| # | Action | Where | Status |
 |---|--------|-------|--------|
-| 1 | Harden Supabase auth: min password 10, leaked-password check, CAPTCHA or closed sign-ups | Supabase Dashboard | 10 min |
-| 2 | Deploy self-hosted quote proxy; swap `PROXY` + CSP entry | Cloudflare Worker / Supabase Edge Fn + `quotes.ts`, `index.html` | ~1 h |
-| 3 | Add `tbl` CHECK + `data` size CHECK to `records` | Supabase SQL editor | 5 min |
-| 4 | ✅ Pull-validation, import-validation, frame-buster, client 8-char floor, crypto UUIDs | this repo (done in v1.8.0) | — |
-| 5 | Move hosting to Cloudflare Pages/Netlify for real headers (frame-ancestors, HSTS, header CSP) | infra | ~1 h |
-| 6 | Encrypted backup export (passphrase, AES-GCM) | this repo | ~half day |
-| 7 | Upgrade vite 8 / vitest 4 (dev-only advisories) | this repo | ~1 h |
+| 1 | Harden Supabase auth: min password 10, leaked-password check, CAPTCHA or closed sign-ups | Supabase Dashboard | ⚠️ **user action** (10 min) |
+| 2 | Deploy `proxy/cloudflare-worker.js`, set `VITE_QUOTES_PROXY` repo variable | Cloudflare + GitHub | ⚠️ **user action** (5 min — all code shipped in v1.9.0) |
+| 3 | Run the guardrail SQL (`tbl` CHECK + `data` size CHECK) appended to `supabase/schema.sql` | Supabase SQL editor | ⚠️ **user action** (5 min) |
+| 4 | Pull-validation, import-validation, frame-buster, client 8-char floor, crypto UUIDs | this repo | ✅ v1.8.0 |
+| 5 | Encrypted backup export/import (passphrase, AES-256-GCM + PBKDF2) | this repo | ✅ v1.9.0 |
+| 6 | Toolchain upgrade → `npm audit` 0 vulnerabilities | this repo | ✅ v1.9.0 |
+| 7 | Move hosting to Cloudflare Pages/Netlify for real headers (frame-ancestors, HSTS, header CSP) | infra | optional (~1 h; frame-buster covers the practical risk meanwhile) |

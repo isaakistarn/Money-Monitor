@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { Card, SectionHeader } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
-import { Select } from '@/components/ui/Field'
+import { Field, Input, Select } from '@/components/ui/Field'
+import { Modal } from '@/components/ui/Modal'
 import { Segmented } from '@/components/ui/Segmented'
 import { useConfirm } from '@/components/ui/Confirm'
 import { IconDownload, IconUpload, IconTrash, IconSun, IconMoon, IconSettings, IconRefresh } from '@/components/ui/icons'
@@ -10,7 +11,7 @@ import { useUI } from '@/state/ui'
 import { useUpdate } from '@/state/update'
 import { versionLabel } from '@/lib/version'
 import { CURRENCIES } from '@/lib/money'
-import { exportBackup, importBackup, clearAllData } from '@/db/backup'
+import { exportBackup, importBackup, backupNeedsPassphrase, clearAllData } from '@/db/backup'
 import { seedSampleData } from '@/db/seed'
 import { getMeta } from '@/db/meta'
 import { estimateStorage, requestPersistentStorage } from '@/lib/storage'
@@ -49,7 +50,35 @@ export function Settings() {
     estimateStorage().then(setStorage)
   }, [])
 
-  const onImport = async (file: File) => {
+  // Export modal: optional passphrase → AES-GCM-encrypted backup file.
+  const [exportOpen, setExportOpen] = useState(false)
+  const [exportPass, setExportPass] = useState('')
+  const [exportPass2, setExportPass2] = useState('')
+  // Import modal: shown when the chosen file is an encrypted backup.
+  const [importPending, setImportPending] = useState<string | null>(null)
+  const [importPass, setImportPass] = useState('')
+
+  const doExport = async () => {
+    if (exportPass && exportPass !== exportPass2) {
+      toast('Passphrases don’t match', 'error')
+      return
+    }
+    if (exportPass && exportPass.length < 8) {
+      toast('Use at least 8 characters', 'error')
+      return
+    }
+    try {
+      await exportBackup(exportPass || undefined)
+      toast(exportPass ? 'Encrypted backup exported' : 'Backup exported', 'success')
+      setExportOpen(false)
+      setExportPass('')
+      setExportPass2('')
+    } catch (e) {
+      toast((e as Error).message, 'error')
+    }
+  }
+
+  const confirmAndImport = async (text: string, passphrase?: string) => {
     const ok = await confirm({
       title: 'Replace all data?',
       message: 'Importing a backup replaces everything currently in the app. Consider exporting first.',
@@ -58,8 +87,7 @@ export function Settings() {
     })
     if (!ok) return
     try {
-      const text = await file.text()
-      const { transactions, dropped } = await importBackup(text)
+      const { transactions, dropped } = await importBackup(text, passphrase)
       toast(
         dropped > 0
           ? `Imported ${transactions} transactions (${dropped} invalid row${dropped === 1 ? '' : 's'} skipped)`
@@ -69,6 +97,16 @@ export function Settings() {
     } catch (e) {
       toast((e as Error).message, 'error')
     }
+  }
+
+  const onImport = async (file: File) => {
+    const text = await file.text()
+    if (backupNeedsPassphrase(text)) {
+      setImportPass('')
+      setImportPending(text)
+      return
+    }
+    await confirmAndImport(text)
   }
 
   const onClear = async () => {
@@ -138,7 +176,7 @@ export function Settings() {
           <span className="text-sm text-muted">{lastBackupLabel}</span>
         </Row>
         <div className="grid grid-cols-2 gap-2 py-2">
-          <Button variant="secondary" onClick={() => exportBackup().then(() => toast('Backup exported', 'success'))}>
+          <Button variant="secondary" onClick={() => setExportOpen(true)}>
             <IconDownload width={18} /> Export JSON
           </Button>
           <Button variant="secondary" onClick={() => fileRef.current?.click()}>
@@ -239,6 +277,86 @@ export function Settings() {
       </Card>
 
       <p className="text-center text-xs text-faint pb-4">Money Monitor · local-first · {versionLabel}</p>
+
+      {/* Export: optional encryption passphrase */}
+      <Modal
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        title="Export backup"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setExportOpen(false)}>Cancel</Button>
+            <Button onClick={() => void doExport()}>
+              {exportPass ? 'Export encrypted' : 'Export'}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-muted leading-relaxed">
+            A backup contains your entire financial history. Add a passphrase to encrypt it —
+            recommended if the file will live in a cloud drive, email, or shared computer.
+          </p>
+          <Field label="Passphrase (optional)" hint="Leave blank for a plain, unencrypted export.">
+            <Input
+              type="password"
+              autoComplete="new-password"
+              value={exportPass}
+              onChange={(e) => setExportPass(e.target.value)}
+              placeholder="••••••••"
+            />
+          </Field>
+          {exportPass && (
+            <Field label="Repeat passphrase" hint="There is no recovery — a lost passphrase means a lost backup.">
+              <Input
+                type="password"
+                autoComplete="new-password"
+                value={exportPass2}
+                onChange={(e) => setExportPass2(e.target.value)}
+                placeholder="••••••••"
+              />
+            </Field>
+          )}
+        </div>
+      </Modal>
+
+      {/* Import: passphrase prompt for encrypted backups */}
+      <Modal
+        open={importPending !== null}
+        onClose={() => setImportPending(null)}
+        title="Encrypted backup"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setImportPending(null)}>Cancel</Button>
+            <Button
+              disabled={!importPass}
+              onClick={() => {
+                const text = importPending
+                setImportPending(null)
+                if (text) void confirmAndImport(text, importPass)
+              }}
+            >
+              Unlock & import
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-muted leading-relaxed">
+            This backup is protected. Enter the passphrase it was exported with.
+          </p>
+          <Field label="Passphrase">
+            <Input
+              type="password"
+              autoComplete="current-password"
+              autoFocus
+              value={importPass}
+              onChange={(e) => setImportPass(e.target.value)}
+              placeholder="••••••••"
+            />
+          </Field>
+        </div>
+      </Modal>
     </div>
   )
 }
