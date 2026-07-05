@@ -74,6 +74,16 @@ export function weekStartISO(isoDate: string): string {
   return toISODate(d)
 }
 
+/** Monday week-start (ISO) of the current week, in local time. */
+export function currentWeekStart(): string {
+  return weekStartISO(todayISO())
+}
+
+/** Human label for a week, e.g. "29 Jun – 5 Jul". */
+export function weekRangeLabel(weekStart: string): string {
+  return `${dayLabel(weekStart)} – ${dayLabel(addDaysISO(weekStart, 6))}`
+}
+
 /** Last N week-start dates (Mondays) ending with this week, oldest first. */
 export function recentWeekStarts(n: number): string[] {
   const thisWeek = weekStartISO(todayISO())

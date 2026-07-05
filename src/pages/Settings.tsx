@@ -59,8 +59,13 @@ export function Settings() {
     if (!ok) return
     try {
       const text = await file.text()
-      const { transactions } = await importBackup(text)
-      toast(`Imported ${transactions} transactions`, 'success')
+      const { transactions, dropped } = await importBackup(text)
+      toast(
+        dropped > 0
+          ? `Imported ${transactions} transactions (${dropped} invalid row${dropped === 1 ? '' : 's'} skipped)`
+          : `Imported ${transactions} transactions`,
+        'success',
+      )
     } catch (e) {
       toast((e as Error).message, 'error')
     }

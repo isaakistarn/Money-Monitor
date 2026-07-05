@@ -13,7 +13,7 @@ import {
   deleteHolding,
   rebuildRollups,
 } from './repo'
-import { currentYm } from '@/lib/date'
+import { currentYm, weekStartISO } from '@/lib/date'
 
 async function balance(accountId: string, openingMinor: number, isLiability = false) {
   const r = await db.accountRollup.get(accountId)
@@ -193,6 +193,28 @@ describe('repository rollups', () => {
     expect(all[0].amountMinor).toBe(250_00)
     await upsertBudget('food', currentYm(), 0)
     expect((await db.budgets.toArray()).length).toBe(0)
+  })
+
+  it('weekly budgets: a week-start key marks period weekly and coexists with the monthly budget', async () => {
+    const week = weekStartISO(todayInMonth())
+    await upsertBudget('food', currentYm(), 300_00) // monthly
+    await upsertBudget('food', week, 80_00) // weekly, same category
+
+    const all = await db.budgets.toArray()
+    expect(all.length).toBe(2)
+
+    const weeklyRow = all.find((b) => b.ym === week)!
+    const monthlyRow = all.find((b) => b.ym === currentYm())!
+    expect(weeklyRow.period).toBe('weekly')
+    expect(monthlyRow.period).toBeUndefined()
+
+    // Replacing and zero-removal work per period key independently.
+    await upsertBudget('food', week, 90_00)
+    expect((await db.budgets.toArray()).length).toBe(2)
+    await upsertBudget('food', week, 0)
+    const rest = await db.budgets.toArray()
+    expect(rest.length).toBe(1)
+    expect(rest[0].ym).toBe(currentYm())
   })
 })
 

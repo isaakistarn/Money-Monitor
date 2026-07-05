@@ -190,10 +190,16 @@ export async function deleteAccount(id: string): Promise<void> {
 
 /* ----------------------------- Budgets ------------------------------ */
 
-export async function upsertBudget(categoryId: string, ym: string, amountMinor: number): Promise<void> {
+/**
+ * Create/replace a budget for one category and period. `periodKey` is either a
+ * month ('yyyy-mm') or a Monday week-start date ('yyyy-mm-dd') — a full-date
+ * key marks the budget as weekly. Amount ≤ 0 removes the budget.
+ */
+export async function upsertBudget(categoryId: string, periodKey: string, amountMinor: number): Promise<void> {
   const ts = now()
+  const period = periodKey.length === 10 ? ('weekly' as const) : undefined
   await db.transaction('rw', db.budgets, db.outbox, async () => {
-    const existing = await db.budgets.where('[categoryId+ym]').equals([categoryId, ym]).first()
+    const existing = await db.budgets.where('[categoryId+ym]').equals([categoryId, periodKey]).first()
     if (amountMinor <= 0) {
       if (existing) {
         await db.budgets.delete(existing.id)
@@ -201,7 +207,7 @@ export async function upsertBudget(categoryId: string, ym: string, amountMinor: 
       }
       return
     }
-    const budget: Budget = { id: existing?.id ?? uid(), categoryId, ym, amountMinor, updatedAt: ts }
+    const budget: Budget = { id: existing?.id ?? uid(), categoryId, ym: periodKey, period, amountMinor, updatedAt: ts }
     await db.budgets.put(budget)
     await markChanged('budgets', budget.id, ts)
   })

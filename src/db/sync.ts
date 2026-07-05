@@ -3,7 +3,7 @@ import { db } from './db'
 import { rebuildRollups } from './repo'
 import { getMeta, setMeta } from './meta'
 import { supabase } from '@/lib/supabase'
-import type { SyncedTable } from '@/types/models'
+import { SYNCED_TABLES, type SyncedTable } from '@/types/models'
 
 /** Minimal shape every synced row shares, for table-agnostic reads/writes. */
 type Row = { id: string; updatedAt?: number }
@@ -36,6 +36,22 @@ const TABLE_OF = {
   holdings: db.holdings,
   watchlist: db.watchlist,
 } as unknown as Record<SyncedTable, Table<Row, string>>
+
+// Membership check via a Set (never a bare object lookup, which would walk the
+// prototype chain — e.g. tbl: "toString" would come back truthy and crash sync).
+const VALID_TABLES = new Set<string>(SYNCED_TABLES)
+
+/**
+ * A pulled record is applied only if it targets a known table AND its payload's
+ * `id` matches the server `row_id`. Without the id check a poisoned record
+ * could smuggle a mismatched payload into a legitimate row slot and overwrite
+ * an arbitrary local row. Malformed records are skipped, never applied.
+ */
+function isApplicable(rec: RemoteRecord): boolean {
+  if (!VALID_TABLES.has(rec.tbl)) return false
+  if (rec.deleted) return true // tombstones carry no payload
+  return !!rec.data && typeof rec.data === 'object' && rec.data.id === rec.row_id
+}
 
 interface RemoteRecord {
   tbl: SyncedTable
@@ -74,8 +90,8 @@ async function pull(userId: string): Promise<number> {
 
     await db.transaction('rw', [db.accounts, db.categories, db.transactions, db.budgets, db.recurring, db.paySplits, db.holdings, db.watchlist], async () => {
       for (const rec of rows) {
+        if (!isApplicable(rec)) continue
         const table = TABLE_OF[rec.tbl]
-        if (!table) continue
         const remoteTs = Number((rec.data as { updatedAt?: number })?.updatedAt ?? 0)
         const local = (await table.get(rec.row_id)) as { updatedAt?: number } | undefined
         const localTs = local?.updatedAt ?? 0

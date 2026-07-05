@@ -230,14 +230,37 @@ export function useAccounts(): Account[] | undefined {
   return useLiveQuery(() => db.accounts.orderBy('order').toArray(), [])
 }
 
-export function useBudgets(ym = currentYm()) {
+/**
+ * Category spend within a date range, from the raw transactions (the rollup
+ * tables are monthly-only). Skips transfers and excluded rows, matching the
+ * monthly aggregates' rules.
+ */
+async function categorySpendBetween(startISO: string, endISO: string): Promise<Map<string, number>> {
+  const spend = new Map<string, number>()
+  const txns = await db.transactions.where('date').between(startISO, endISO, true, true).toArray()
+  for (const t of txns) {
+    if (t.type !== 'expense' || t.excluded || !t.categoryId) continue
+    spend.set(t.categoryId, (spend.get(t.categoryId) ?? 0) + t.amountMinor)
+  }
+  return spend
+}
+
+/**
+ * Budgets + spend for one period. `periodKey` is a month ('yyyy-mm', spend from
+ * the monthly rollup) or a Monday week-start date ('yyyy-mm-dd', spend summed
+ * over that week's transactions).
+ */
+export function useBudgets(periodKey = currentYm()) {
   return useLiveQuery(async () => {
-    const [budgets, spend, cats] = await Promise.all([
-      db.budgets.where('ym').equals(ym).toArray(),
-      db.categoryMonthly.where('ym').equals(ym).toArray(),
+    const weekly = periodKey.length === 10
+    const [budgets, spendMap, cats] = await Promise.all([
+      db.budgets.where('ym').equals(periodKey).toArray(),
+      weekly
+        ? categorySpendBetween(periodKey, addDaysISO(periodKey, 6))
+        : db.categoryMonthly.where('ym').equals(periodKey).toArray()
+            .then((rows) => new Map(rows.map((s) => [s.categoryId, s.spentMinor]))),
       db.categories.toArray(),
     ])
-    const spendMap = new Map(spend.map((s) => [s.categoryId, s.spentMinor]))
     const catMap = new Map(cats.map((c) => [c.id, c]))
     return budgets
       .map((b) => {
@@ -252,7 +275,7 @@ export function useBudgets(ym = currentYm()) {
         }
       })
       .sort((a, b) => b.pct - a.pct)
-  }, [ym])
+  }, [periodKey])
 }
 
 export function useDueRecurring() {

@@ -64,10 +64,17 @@ export interface Transaction extends Synced {
   createdAt: string
 }
 
+export type BudgetPeriod = 'monthly' | 'weekly'
+
 export interface Budget extends Synced {
   id: string
   categoryId: string
+  /** Period key: 'yyyy-mm' for a monthly budget, or the Monday week-start ISO
+   *  date ('yyyy-mm-dd') for a weekly one. Keys can't collide across periods,
+   *  so the existing unique [categoryId+ym] index covers both. */
   ym: string
+  /** Absent = monthly (all legacy rows predate weekly budgets). */
+  period?: 'weekly'
   amountMinor: number
 }
 

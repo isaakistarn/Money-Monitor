@@ -43,3 +43,22 @@ create policy "records are private to owner"
   for all
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
+
+-- Hardening guardrails (safe to run on an existing table). Even an
+-- authenticated session can then only write rows shaped like real app data:
+--  · tbl is constrained to the tables the app actually syncs, and
+--  · a single row's JSON payload is capped, so a stolen password can't be used
+--    to bloat the project with junk data.
+alter table public.records
+  drop constraint if exists records_tbl_allowed,
+  add constraint records_tbl_allowed check (tbl in
+    ('accounts','categories','transactions','budgets','recurring','paySplits','holdings','watchlist'));
+
+alter table public.records
+  drop constraint if exists records_data_size,
+  add constraint records_data_size check (data is null or pg_column_size(data) < 100000);
+
+-- Also review Supabase Dashboard → Auth settings (not expressible in SQL):
+--   · minimum password length ≥ 10 + leaked-password protection,
+--   · CAPTCHA on sign-up/sign-in — or disable public sign-ups entirely once
+--     your own devices are enrolled (this is a personal app).

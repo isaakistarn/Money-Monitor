@@ -5,23 +5,34 @@ import { Button } from '@/components/ui/Button'
 import { ProgressBar } from '@/components/ui/ProgressBar'
 import { Modal } from '@/components/ui/Modal'
 import { Field, Input, Select } from '@/components/ui/Field'
+import { Segmented } from '@/components/ui/Segmented'
 import { EmptyState } from '@/components/ui/EmptyState'
-import { MonthNav } from '@/components/MonthNav'
+import { MonthNav, WeekNav } from '@/components/MonthNav'
 import { IconTarget, IconPlus } from '@/components/ui/icons'
 import { useBudgets, useCategories } from '@/hooks/useData'
 import { useCurrency } from '@/state/settings'
 import { upsertBudget } from '@/db/repo'
 import { parseMoney, minorToInput, currencySymbol } from '@/lib/money'
-import { currentYm } from '@/lib/date'
+import { currentYm, currentWeekStart, addDaysISO, addMonthsISO } from '@/lib/date'
+import type { BudgetPeriod } from '@/types/models'
 
 export function Budgets() {
+  const [period, setPeriod] = useState<BudgetPeriod>('monthly')
   const [ym, setYm] = useState(currentYm())
-  const budgets = useBudgets(ym)
+  const [week, setWeek] = useState(currentWeekStart())
+  // The active period key: 'yyyy-mm' (monthly) or Monday week-start (weekly).
+  const key = period === 'weekly' ? week : ym
+  const budgets = useBudgets(key)
   const categories = useCategories()
   const currency = useCurrency()
 
+  // Previous period, so an empty week/month can start from the last one's limits.
+  const prevKey = period === 'weekly' ? addDaysISO(week, -7) : addMonthsISO(ym + '-01', -1).slice(0, 7)
+  const prevBudgets = useBudgets(prevKey)
+
   const [editing, setEditing] = useState<{ categoryId: string; amount: string } | null>(null)
 
+  const periodNoun = period === 'weekly' ? 'week' : 'month'
   const expenseCats = (categories ?? []).filter((c) => c.kind === 'expense')
   const budgetedIds = new Set((budgets ?? []).map((b) => b.categoryId))
   const unbudgeted = expenseCats.filter((c) => !budgetedIds.has(c.id))
@@ -32,18 +43,34 @@ export function Budgets() {
   const save = async () => {
     if (!editing) return
     const minor = parseMoney(editing.amount, currency)
-    await upsertBudget(editing.categoryId, ym, Number.isFinite(minor) ? minor : 0)
+    await upsertBudget(editing.categoryId, key, Number.isFinite(minor) ? minor : 0)
     setEditing(null)
+  }
+
+  const copyPrevious = async () => {
+    for (const b of prevBudgets ?? []) await upsertBudget(b.categoryId, key, b.amountMinor)
   }
 
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <h1 className="text-2xl font-bold tracking-tight">Budgets</h1>
-        <MonthNav ym={ym} onChange={setYm} />
+        <div className="flex items-center flex-wrap gap-2">
+          <div className="w-48">
+            <Segmented<BudgetPeriod>
+              value={period}
+              onChange={setPeriod}
+              options={[
+                { value: 'monthly', label: 'Monthly' },
+                { value: 'weekly', label: 'Weekly' },
+              ]}
+            />
+          </div>
+          {period === 'weekly' ? <WeekNav weekStart={week} onChange={setWeek} /> : <MonthNav ym={ym} onChange={setYm} />}
+        </div>
       </div>
 
-      {/* Month summary */}
+      {/* Period summary */}
       <Card className="p-5">
         <div className="flex items-center justify-between mb-3">
           <div>
@@ -66,14 +93,21 @@ export function Budgets() {
       {budgets && budgets.length === 0 ? (
         <EmptyState
           icon={<IconTarget width={32} />}
-          title="No budgets for this month"
-          message="Set a monthly limit for a category to track your spending against it."
+          title={`No budgets for this ${periodNoun}`}
+          message={`Set a ${period} limit for a category to track your spending against it.`}
           action={
-            unbudgeted[0] && (
-              <Button onClick={() => setEditing({ categoryId: unbudgeted[0].id, amount: '' })}>
-                <IconPlus width={18} /> Add budget
-              </Button>
-            )
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              {unbudgeted[0] && (
+                <Button onClick={() => setEditing({ categoryId: unbudgeted[0].id, amount: '' })}>
+                  <IconPlus width={18} /> Add budget
+                </Button>
+              )}
+              {(prevBudgets?.length ?? 0) > 0 && (
+                <Button variant="secondary" onClick={copyPrevious}>
+                  Copy last {periodNoun}’s budgets
+                </Button>
+              )}
+            </div>
           }
         />
       ) : (
@@ -131,7 +165,7 @@ export function Budgets() {
           <>
             {editing && budgetedIds.has(editing.categoryId) && (
               <Button variant="ghost" className="mr-auto text-negative" onClick={async () => {
-                if (editing) await upsertBudget(editing.categoryId, ym, 0)
+                if (editing) await upsertBudget(editing.categoryId, key, 0)
                 setEditing(null)
               }}>
                 Remove
@@ -152,7 +186,7 @@ export function Budgets() {
                 {expenseCats.map((c) => <option key={c.id} value={c.id}>{c.icon} {c.name}</option>)}
               </Select>
             </Field>
-            <Field label="Monthly limit">
+            <Field label={period === 'weekly' ? 'Weekly limit' : 'Monthly limit'}>
               <div className="relative">
                 <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none">{currencySymbol(currency)}</span>
                 <Input

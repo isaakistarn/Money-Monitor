@@ -52,6 +52,12 @@ export function SyncCard() {
 
   const submit = async () => {
     if (!email || !password) return
+    // Client-side floor for a finance account; the authoritative minimum is the
+    // Supabase Auth setting (raise it there too — see SECURITY.md).
+    if (mode === 'signup' && password.length < 8) {
+      toast('Use at least 8 characters for your password', 'error')
+      return
+    }
     setBusy(true)
     try {
       if (mode === 'signup') {
@@ -88,7 +94,7 @@ export function SyncCard() {
               placeholder="you@example.com"
             />
           </Field>
-          <Field label="Password" hint={mode === 'signup' ? 'At least 6 characters.' : undefined}>
+          <Field label="Password" hint={mode === 'signup' ? 'At least 8 characters.' : undefined}>
             <Input
               type="password"
               autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
