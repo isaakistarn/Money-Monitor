@@ -11,6 +11,10 @@ import {
   addHolding,
   updateHolding,
   deleteHolding,
+  addCategory,
+  updateCategory,
+  deleteCategory,
+  categoryUsage,
   rebuildRollups,
 } from './repo'
 import { currentYm, weekStartISO } from '@/lib/date'
@@ -193,6 +197,86 @@ describe('repository rollups', () => {
     expect(all[0].amountMinor).toBe(250_00)
     await upsertBudget('food', currentYm(), 0)
     expect((await db.budgets.toArray()).length).toBe(0)
+  })
+
+  it('custom categories: add/update stamp updatedAt and queue for sync', async () => {
+    const c = await addCategory({ name: '  Coffee ', kind: 'expense', icon: '☕' })
+    const row = await db.categories.get(c.id)
+    expect(row).toMatchObject({ name: 'Coffee', kind: 'expense', icon: '☕', isDefault: false })
+    expect(row?.updatedAt).toBeGreaterThan(0)
+    expect(await db.outbox.get(`categories:${c.id}`)).toMatchObject({ deleted: false })
+
+    await updateCategory(c.id, { name: 'Café', icon: '🥐' })
+    expect(await db.categories.get(c.id)).toMatchObject({ name: 'Café', icon: '🥐' })
+  })
+
+  it('addCategory falls back to a default icon when blank', async () => {
+    const exp = await addCategory({ name: 'Stuff', kind: 'expense', icon: '  ' })
+    const inc = await addCategory({ name: 'Extra', kind: 'income', icon: '' })
+    expect((await db.categories.get(exp.id))?.icon).toBe('🏷️')
+    expect((await db.categories.get(inc.id))?.icon).toBe('💰')
+  })
+
+  it('deleteCategory reassigns transactions and merges the spend rollup', async () => {
+    const coffee = await addCategory({ name: 'Coffee', kind: 'expense', icon: '☕' })
+    const food = await addCategory({ name: 'Food', kind: 'expense', icon: '🍔' })
+    const bank = await addAccount({ name: 'Bank', type: 'bank', openingBalanceMinor: 100_00 })
+    await addTransaction({ type: 'expense', amountMinor: 4_00, accountId: bank.id, categoryId: coffee.id, date: todayInMonth() })
+    await addTransaction({ type: 'expense', amountMinor: 10_00, accountId: bank.id, categoryId: food.id, date: todayInMonth() })
+    await upsertBudget(coffee.id, currentYm(), 20_00)
+    expect(await categoryUsage(coffee.id)).toBe(1)
+
+    await deleteCategory(coffee.id, food.id)
+
+    expect(await db.categories.get(coffee.id)).toBeUndefined()
+    expect(await db.outbox.get(`categories:${coffee.id}`)).toMatchObject({ deleted: true })
+    // Transaction kept, relabelled; balance untouched.
+    const txns = await db.transactions.toArray()
+    expect(txns).toHaveLength(2)
+    expect(txns.every((t) => t.categoryId === food.id)).toBe(true)
+    expect(await balance(bank.id, 100_00)).toBe(86_00)
+    // Spend rollup merged into the target; the old slice is gone.
+    expect((await db.categoryMonthly.get(`${currentYm()}:${food.id}`))?.spentMinor).toBe(14_00)
+    expect(await db.categoryMonthly.get(`${currentYm()}:${coffee.id}`)).toBeUndefined()
+    // Its budget is deleted (with a tombstone for sync).
+    expect(await db.budgets.where('categoryId').equals(coffee.id).count()).toBe(0)
+    // rebuildRollups agrees with the incrementally-maintained state.
+    const before = await db.categoryMonthly.orderBy('id').toArray()
+    await rebuildRollups()
+    expect(await db.categoryMonthly.orderBy('id').toArray()).toEqual(before)
+  })
+
+  it('deleteCategory without reassignment leaves transactions uncategorised', async () => {
+    const coffee = await addCategory({ name: 'Coffee', kind: 'expense', icon: '☕' })
+    const bank = await addAccount({ name: 'Bank', type: 'bank', openingBalanceMinor: 50_00 })
+    const tx = await addTransaction({ type: 'expense', amountMinor: 4_00, accountId: bank.id, categoryId: coffee.id, date: todayInMonth() })
+
+    await deleteCategory(coffee.id)
+
+    expect((await db.transactions.get(tx.id))?.categoryId).toBeUndefined()
+    expect(await balance(bank.id, 50_00)).toBe(46_00)
+    // No dangling per-category rollup rows.
+    expect(await db.categoryMonthly.where('categoryId').equals(coffee.id).count()).toBe(0)
+    // Monthly expense total is unaffected — only the label was removed.
+    expect((await db.monthlyStats.get(currentYm()))?.expenseMinor).toBe(4_00)
+  })
+
+  it('deleteCategory clears references on recurring rules and pay splits', async () => {
+    const coffee = await addCategory({ name: 'Coffee', kind: 'expense', icon: '☕' })
+    const salary = await addCategory({ name: 'Salary', kind: 'income', icon: '💼' })
+    await db.recurring.add({
+      id: 'r1', type: 'expense', amountMinor: 5_00, categoryId: coffee.id,
+      cadence: 'monthly', nextDue: todayInMonth(), active: true,
+    })
+    await db.paySplits.add({ id: 'p1', name: 'Pay', depositAccountId: 'a1', categoryId: salary.id, allocations: [] })
+
+    await deleteCategory(coffee.id)
+    await deleteCategory(salary.id)
+
+    expect((await db.recurring.get('r1'))?.categoryId).toBeUndefined()
+    expect((await db.paySplits.get('p1'))?.categoryId).toBeUndefined()
+    expect(await db.outbox.get('recurring:r1')).toMatchObject({ deleted: false })
+    expect(await db.outbox.get('paySplits:p1')).toMatchObject({ deleted: false })
   })
 
   it('weekly budgets: a week-start key marks period weekly and coexists with the monthly budget', async () => {

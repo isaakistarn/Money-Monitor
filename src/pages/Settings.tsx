@@ -16,6 +16,7 @@ import { seedSampleData } from '@/db/seed'
 import { getMeta } from '@/db/meta'
 import { estimateStorage, requestPersistentStorage } from '@/lib/storage'
 import { useLiveQuery } from 'dexie-react-hooks'
+import { CategoryManager } from '@/components/CategoryManager'
 import { RecurringManager } from '@/components/RecurringManager'
 import { PaySplitManager } from '@/components/PaySplitManager'
 import { SyncCard } from '@/components/SyncCard'
@@ -162,6 +163,9 @@ export function Settings() {
 
       {/* Cross-device sync */}
       <SyncCard />
+
+      {/* Categories */}
+      <CategoryManager />
 
       {/* Recurring */}
       <RecurringManager />

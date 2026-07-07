@@ -1,5 +1,5 @@
 import { db } from './db'
-import type { Account, Budget, Holding, PaySplit, Recurring, Transaction, WatchItem } from '@/types/models'
+import type { Account, Budget, Category, CategoryKind, Holding, PaySplit, Recurring, Transaction, WatchItem } from '@/types/models'
 import { ymOf, addDaysISO, addMonthsISO } from '@/lib/date'
 import { uid } from '@/lib/cn'
 import { now, markChanged, markDeleted } from './changes'
@@ -184,6 +184,92 @@ export async function deleteAccount(id: string): Promise<void> {
       await db.accountRollup.delete(id)
       await db.accounts.delete(id)
       await markDeleted('accounts', id, ts)
+    },
+  )
+}
+
+/* ---------------------------- Categories ---------------------------- */
+
+export async function addCategory(input: { name: string; kind: CategoryKind; icon: string }): Promise<Category> {
+  const ts = now()
+  const category: Category = {
+    id: uid(),
+    name: input.name.trim(),
+    kind: input.kind,
+    icon: input.icon.trim() || (input.kind === 'income' ? '💰' : '🏷️'),
+    isDefault: false,
+    updatedAt: ts,
+  }
+  await db.transaction('rw', db.categories, db.outbox, async () => {
+    await db.categories.add(category)
+    await markChanged('categories', category.id, ts)
+  })
+  return category
+}
+
+export async function updateCategory(id: string, patch: Partial<Pick<Category, 'name' | 'icon'>>): Promise<void> {
+  const ts = now()
+  await db.transaction('rw', db.categories, db.outbox, async () => {
+    await db.categories.update(id, { ...patch, updatedAt: ts })
+    await markChanged('categories', id, ts)
+  })
+}
+
+/** How many transactions currently reference a category (for delete warnings). */
+export function categoryUsage(id: string): Promise<number> {
+  return db.transactions.where('categoryId').equals(id).count()
+}
+
+/**
+ * Delete a category. Its budgets go with it. Transactions, recurring rules and
+ * pay splits that referenced it are moved to `reassignToId` when given,
+ * otherwise left uncategorised — amounts, dates and balances are never touched,
+ * only the label changes. The category-spend rollup is merged/dropped to match.
+ */
+export async function deleteCategory(id: string, reassignToId?: string): Promise<void> {
+  const ts = now()
+  const nextId = reassignToId === id ? undefined : reassignToId
+  await db.transaction(
+    'rw',
+    [db.categories, db.transactions, db.budgets, db.recurring, db.paySplits, db.categoryMonthly, db.outbox],
+    async () => {
+      const txns = await db.transactions.where('categoryId').equals(id).toArray()
+      for (const t of txns) {
+        await db.transactions.update(t.id, { categoryId: nextId, updatedAt: ts })
+        await markChanged('transactions', t.id, ts)
+      }
+      // Merge this category's slice of the monthly spend rollup into the target
+      // (or drop it — uncategorised spend isn't tracked per category).
+      const rollups = await db.categoryMonthly.where('categoryId').equals(id).toArray()
+      for (const r of rollups) {
+        if (nextId) {
+          const targetId = `${r.ym}:${nextId}`
+          const target = await db.categoryMonthly.get(targetId)
+          await db.categoryMonthly.put({
+            id: targetId, ym: r.ym, categoryId: nextId,
+            spentMinor: (target?.spentMinor ?? 0) + r.spentMinor,
+          })
+        }
+        await db.categoryMonthly.delete(r.id)
+      }
+      // Budgets are meaningless without their category.
+      const budgets = await db.budgets.where('categoryId').equals(id).toArray()
+      for (const b of budgets) {
+        await db.budgets.delete(b.id)
+        await markDeleted('budgets', b.id, ts)
+      }
+      const rules = await db.recurring.filter((r) => r.categoryId === id).toArray()
+      for (const r of rules) {
+        await db.recurring.update(r.id, { categoryId: nextId, updatedAt: ts })
+        await markChanged('recurring', r.id, ts)
+      }
+      const splits = await db.paySplits.filter((s) => s.categoryId === id).toArray()
+      for (const s of splits) {
+        await db.paySplits.update(s.id, { categoryId: nextId, updatedAt: ts })
+        await markChanged('paySplits', s.id, ts)
+      }
+      await db.categories.delete(id)
+      await markDeleted('categories', id, ts)
     },
   )
 }
