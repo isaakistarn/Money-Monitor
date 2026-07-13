@@ -4,6 +4,7 @@ import { db } from './db'
 import {
   addAccount,
   addTransaction,
+  addExpenseWithRoundup,
   updateTransaction,
   deleteTransaction,
   upsertBudget,
@@ -277,6 +278,115 @@ describe('repository rollups', () => {
     expect((await db.paySplits.get('p1'))?.categoryId).toBeUndefined()
     expect(await db.outbox.get('recurring:r1')).toMatchObject({ deleted: false })
     expect(await db.outbox.get('paySplits:p1')).toMatchObject({ deleted: false })
+  })
+
+  it('spend-counting transfer moves balances AND lands in expense + category stats', async () => {
+    await db.categories.add({ id: 'food', name: 'Food', kind: 'expense', icon: '🍔', isDefault: true })
+    const card = await addAccount({ name: 'Card', type: 'bank', openingBalanceMinor: 100_00 })
+    const save = await addAccount({ name: 'Savings', type: 'savings', openingBalanceMinor: 0 })
+
+    const tx = await addTransaction({
+      type: 'transfer', amountMinor: 50, fromAccountId: card.id, toAccountId: save.id,
+      categoryId: 'food', countsAsSpend: true, date: todayInMonth(),
+    })
+
+    // Balances: normal transfer semantics — money moved, not destroyed.
+    expect(await balance(card.id, 100_00)).toBe(99_50)
+    expect(await balance(save.id, 0)).toBe(50)
+    // Stats: the moved amount counts as spending in its category.
+    expect((await db.monthlyStats.get(currentYm()))?.expenseMinor).toBe(50)
+    expect((await db.categoryMonthly.get(`${currentYm()}:food`))?.spentMinor).toBe(50)
+
+    // rebuildRollups reproduces the same state.
+    const before = {
+      acc: await db.accountRollup.orderBy('accountId').toArray(),
+      month: await db.monthlyStats.toArray(),
+      cat: await db.categoryMonthly.toArray(),
+    }
+    await rebuildRollups()
+    expect(await db.accountRollup.orderBy('accountId').toArray()).toEqual(before.acc)
+    expect(await db.monthlyStats.toArray()).toEqual(before.month)
+    expect(await db.categoryMonthly.toArray()).toEqual(before.cat)
+
+    // Toggling the flag off reverses the stats but leaves balances alone,
+    // and the category is dropped (plain transfers carry none).
+    await updateTransaction(tx.id, { countsAsSpend: false })
+    expect((await db.monthlyStats.get(currentYm()))?.expenseMinor ?? 0).toBe(0)
+    expect((await db.categoryMonthly.get(`${currentYm()}:food`))?.spentMinor ?? 0).toBe(0)
+    expect((await db.transactions.get(tx.id))?.categoryId).toBeUndefined()
+    expect(await balance(card.id, 100_00)).toBe(99_50)
+    expect(await balance(save.id, 0)).toBe(50)
+  })
+
+  it('addExpenseWithRoundup records the purchase and a spend-counting transfer together', async () => {
+    await db.categories.add({ id: 'food', name: 'Food', kind: 'expense', icon: '🍔', isDefault: true })
+    const card = await addAccount({ name: 'Card', type: 'bank', openingBalanceMinor: 100_00 })
+    const save = await addAccount({ name: 'Savings', type: 'savings', openingBalanceMinor: 0 })
+
+    const purchase = await addExpenseWithRoundup(
+      { type: 'expense', amountMinor: 4_50, accountId: card.id, categoryId: 'food', date: todayInMonth() },
+      { amountMinor: 50, toAccountId: save.id },
+    )
+
+    // Card lost purchase + round-up; savings gained the round-up.
+    expect(await balance(card.id, 100_00)).toBe(95_00)
+    expect(await balance(save.id, 0)).toBe(50)
+    // The whole 5.00 counts as spent, all in the purchase's category.
+    expect((await db.monthlyStats.get(currentYm()))?.expenseMinor).toBe(5_00)
+    expect((await db.categoryMonthly.get(`${currentYm()}:food`))?.spentMinor).toBe(5_00)
+
+    const txns = await db.transactions.toArray()
+    expect(txns).toHaveLength(2)
+    const roundup = txns.find((t) => t.id !== purchase.id)!
+    expect(roundup).toMatchObject({
+      type: 'transfer', amountMinor: 50, fromAccountId: card.id, toAccountId: save.id,
+      categoryId: 'food', countsAsSpend: true, note: 'Round-up', date: purchase.date,
+    })
+    // Both rows queued for sync.
+    expect(await db.outbox.get(`transactions:${purchase.id}`)).toMatchObject({ deleted: false })
+    expect(await db.outbox.get(`transactions:${roundup.id}`)).toMatchObject({ deleted: false })
+  })
+
+  it('addExpenseWithRoundup rejects a round-up into the purchase account', async () => {
+    const card = await addAccount({ name: 'Card', type: 'bank', openingBalanceMinor: 100_00 })
+    await expect(
+      addExpenseWithRoundup(
+        { type: 'expense', amountMinor: 4_50, accountId: card.id, categoryId: 'food', date: todayInMonth() },
+        { amountMinor: 50, toAccountId: card.id },
+      ),
+    ).rejects.toThrow(/different account/)
+    expect(await db.transactions.count()).toBe(0)
+  })
+
+  it('excluded spend-counting transfer moves balances but stays out of stats', async () => {
+    const card = await addAccount({ name: 'Card', type: 'bank', openingBalanceMinor: 100_00 })
+    const save = await addAccount({ name: 'Savings', type: 'savings', openingBalanceMinor: 0 })
+    await addTransaction({
+      type: 'transfer', amountMinor: 75, fromAccountId: card.id, toAccountId: save.id,
+      categoryId: 'food', countsAsSpend: true, excluded: true, date: todayInMonth(),
+    })
+    expect(await balance(card.id, 100_00)).toBe(99_25)
+    expect(await balance(save.id, 0)).toBe(75)
+    expect((await db.monthlyStats.get(currentYm()))?.expenseMinor ?? 0).toBe(0)
+    expect(await db.categoryMonthly.count()).toBe(0)
+  })
+
+  it('deleteCategory relabels spend-counting transfers like any other transaction', async () => {
+    const coffee = await addCategory({ name: 'Coffee', kind: 'expense', icon: '☕' })
+    const other = await addCategory({ name: 'Other', kind: 'expense', icon: '📦' })
+    const card = await addAccount({ name: 'Card', type: 'bank', openingBalanceMinor: 100_00 })
+    const save = await addAccount({ name: 'Savings', type: 'savings', openingBalanceMinor: 0 })
+    const tx = await addTransaction({
+      type: 'transfer', amountMinor: 60, fromAccountId: card.id, toAccountId: save.id,
+      categoryId: coffee.id, countsAsSpend: true, date: todayInMonth(),
+    })
+
+    await deleteCategory(coffee.id, other.id)
+
+    expect((await db.transactions.get(tx.id))?.categoryId).toBe(other.id)
+    expect((await db.categoryMonthly.get(`${currentYm()}:${other.id}`))?.spentMinor).toBe(60)
+    expect(await db.categoryMonthly.get(`${currentYm()}:${coffee.id}`)).toBeUndefined()
+    expect((await db.monthlyStats.get(currentYm()))?.expenseMinor).toBe(60)
   })
 
   it('weekly budgets: a week-start key marks period weekly and coexists with the monthly budget', async () => {

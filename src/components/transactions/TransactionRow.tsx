@@ -29,17 +29,19 @@ export const TransactionRow = memo(function TransactionRow({
   onClick?: () => void
 }) {
   const v = typeVisual(tx.type)
+  // A spend-counting transfer (e.g. a purchase round-up) reads as money spent.
+  const spendTransfer = tx.type === 'transfer' && !!tx.countsAsSpend
   const title =
     tx.type === 'transfer'
       ? `${meta.fromName ?? '—'} → ${meta.toName ?? '—'}`
       : meta.categoryName ?? 'Uncategorised'
   const subtitle =
     tx.type === 'transfer'
-      ? tx.note || 'Transfer'
+      ? [spendTransfer ? meta.categoryName : undefined, tx.note].filter(Boolean).join(' · ') || 'Transfer'
       : [meta.accountName, tx.note].filter(Boolean).join(' · ')
 
   const signedMinor =
-    tx.type === 'income' ? tx.amountMinor : tx.type === 'expense' ? -tx.amountMinor : tx.amountMinor
+    tx.type === 'income' ? tx.amountMinor : tx.type === 'expense' || spendTransfer ? -tx.amountMinor : tx.amountMinor
 
   return (
     <button
@@ -47,11 +49,18 @@ export const TransactionRow = memo(function TransactionRow({
       className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-elevated transition-colors text-left"
     >
       <span className={cn('shrink-0 grid place-items-center h-9 w-9 rounded-full text-base', v.ring)}>
-        {tx.type === 'transfer' ? v.icon : <span className="text-base leading-none">{meta.categoryIcon ?? '•'}</span>}
+        {tx.type === 'transfer' && !(spendTransfer && meta.categoryIcon)
+          ? v.icon
+          : <span className="text-base leading-none">{meta.categoryIcon ?? '•'}</span>}
       </span>
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5 min-w-0">
           <span className="text-sm font-medium text-fg truncate">{title}</span>
+          {spendTransfer && (
+            <span className="shrink-0 text-[10px] font-medium text-muted bg-elevated rounded px-1.5 py-0.5 leading-none">
+              spent
+            </span>
+          )}
           {tx.excluded && (
             <span className="shrink-0 text-[10px] font-medium text-muted bg-elevated rounded px-1.5 py-0.5 leading-none">
               excluded
@@ -63,9 +72,9 @@ export const TransactionRow = memo(function TransactionRow({
       <span className="text-right shrink-0">
         <Money
           minor={signedMinor}
-          signed={tx.type !== 'transfer'}
-          colorBySign={tx.type !== 'transfer'}
-          className={cn('text-sm font-semibold', tx.type === 'transfer' && 'text-muted')}
+          signed={tx.type !== 'transfer' || spendTransfer}
+          colorBySign={tx.type !== 'transfer' || spendTransfer}
+          className={cn('text-sm font-semibold', tx.type === 'transfer' && !spendTransfer && 'text-muted')}
         />
         <span className="block text-xs text-faint">{relativeDateLabel(tx.date)}</span>
       </span>

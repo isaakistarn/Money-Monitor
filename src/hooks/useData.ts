@@ -134,7 +134,8 @@ export function useDailyTrend(days = 30) {
     const inc = new Map<string, number>()
     const exp = new Map<string, number>()
     for (const t of rows) {
-      if (t.excluded || t.type === 'transfer') continue
+      // Spend-counting transfers land in the expense bucket like an expense.
+      if (t.excluded || (t.type === 'transfer' && !t.countsAsSpend)) continue
       const m = t.type === 'income' ? inc : exp
       m.set(t.date, (m.get(t.date) ?? 0) + t.amountMinor)
     }
@@ -161,7 +162,7 @@ export function useWeeklyTrend(weeks = 8) {
     const inc = new Map<string, number>()
     const exp = new Map<string, number>()
     for (const t of rows) {
-      if (t.excluded || t.type === 'transfer') continue
+      if (t.excluded || (t.type === 'transfer' && !t.countsAsSpend)) continue
       const wk = weekStartISO(t.date)
       const m = t.type === 'income' ? inc : exp
       m.set(wk, (m.get(wk) ?? 0) + t.amountMinor)
@@ -232,14 +233,15 @@ export function useAccounts(): Account[] | undefined {
 
 /**
  * Category spend within a date range, from the raw transactions (the rollup
- * tables are monthly-only). Skips transfers and excluded rows, matching the
- * monthly aggregates' rules.
+ * tables are monthly-only). Skips plain transfers and excluded rows but counts
+ * spend-flagged transfers, matching the monthly aggregates' rules.
  */
 async function categorySpendBetween(startISO: string, endISO: string): Promise<Map<string, number>> {
   const spend = new Map<string, number>()
   const txns = await db.transactions.where('date').between(startISO, endISO, true, true).toArray()
   for (const t of txns) {
-    if (t.type !== 'expense' || t.excluded || !t.categoryId) continue
+    const spends = t.type === 'expense' || (t.type === 'transfer' && t.countsAsSpend)
+    if (!spends || t.excluded || !t.categoryId) continue
     spend.set(t.categoryId, (spend.get(t.categoryId) ?? 0) + t.amountMinor)
   }
   return spend

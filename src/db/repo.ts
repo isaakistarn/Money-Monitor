@@ -64,10 +64,11 @@ async function applyRollups(t: Transaction, sign: 1 | -1) {
     await bumpAccount(t.fromAccountId, sign * -t.amountMinor)
     await bumpAccount(t.toAccountId, sign * t.amountMinor)
   }
-  // Analytics aggregates skip excluded transactions (and transfers).
+  // Analytics aggregates skip excluded transactions (and plain transfers —
+  // a spend-counting transfer contributes its amount like an expense).
   if (t.excluded) return
   if (t.type === 'income') await bumpMonthly(t.ym, sign * t.amountMinor, 0)
-  if (t.type === 'expense') {
+  if (t.type === 'expense' || (t.type === 'transfer' && t.countsAsSpend)) {
     await bumpMonthly(t.ym, 0, sign * t.amountMinor)
     await bumpCategory(t.ym, t.categoryId, sign * t.amountMinor)
   }
@@ -79,10 +80,14 @@ export async function addTransaction(input: NewTransaction): Promise<Transaction
     id: input.id ?? uid(),
     type: input.type,
     amountMinor: Math.abs(Math.round(input.amountMinor)),
-    categoryId: input.type === 'transfer' ? undefined : input.categoryId,
+    categoryId:
+      input.type === 'transfer'
+        ? (input.countsAsSpend ? input.categoryId : undefined)
+        : input.categoryId,
     accountId: input.type === 'transfer' ? undefined : input.accountId,
     fromAccountId: input.type === 'transfer' ? input.fromAccountId : undefined,
     toAccountId: input.type === 'transfer' ? input.toAccountId : undefined,
+    countsAsSpend: input.type === 'transfer' && input.countsAsSpend ? true : undefined,
     date: input.date,
     ym: ymOf(input.date),
     note: input.note?.trim() || undefined,
@@ -115,16 +120,54 @@ export async function updateTransaction(id: string, patch: Partial<NewTransactio
     }
     // Normalise mutually-exclusive account fields by type.
     if (next.type === 'transfer') {
-      next.categoryId = undefined
       next.accountId = undefined
+      next.countsAsSpend = next.countsAsSpend || undefined
+      if (!next.countsAsSpend) next.categoryId = undefined
     } else {
       next.fromAccountId = undefined
       next.toAccountId = undefined
+      next.countsAsSpend = undefined
     }
     await db.transactions.put(next)
     await applyRollups(next, 1) // apply the new effects
     await markChanged('transactions', id, ts)
   })
+}
+
+export interface RoundupInput {
+  amountMinor: number
+  toAccountId: string
+  note?: string
+}
+
+/**
+ * Record a purchase together with its round-up: the expense itself, plus a
+ * transfer of the extra amount out of the same account flagged `countsAsSpend`
+ * so the moved money is counted as spent with the purchase (same category,
+ * same date). Both rows are written in one atomic transaction.
+ */
+export async function addExpenseWithRoundup(
+  expense: NewTransaction,
+  roundup: RoundupInput,
+): Promise<Transaction> {
+  if (expense.type !== 'expense') throw new Error('Round-ups only apply to expenses.')
+  if (roundup.toAccountId === expense.accountId) throw new Error('Round-up must go to a different account.')
+  let purchase!: Transaction
+  await db.transaction('rw', db.transactions, db.accountRollup, db.monthlyStats, db.categoryMonthly, db.outbox, async () => {
+    purchase = await addTransaction(expense)
+    await addTransaction({
+      type: 'transfer',
+      amountMinor: roundup.amountMinor,
+      fromAccountId: expense.accountId,
+      toAccountId: roundup.toAccountId,
+      categoryId: expense.categoryId,
+      countsAsSpend: true,
+      date: expense.date,
+      note: roundup.note?.trim() || 'Round-up',
+      excluded: expense.excluded,
+    })
+  })
+  return purchase
 }
 
 export async function deleteTransaction(id: string): Promise<void> {
@@ -486,10 +529,24 @@ export async function rebuildRollups(): Promise<void> {
       const monthly = new Map<string, { income: number; expense: number }>()
       const catMonthly = new Map<string, { ym: string; categoryId: string; spent: number }>()
 
+      const addSpend = (t: { ym: string; categoryId?: string; amountMinor: number }) => {
+        const m = monthly.get(t.ym) ?? { income: 0, expense: 0 }
+        m.expense += t.amountMinor
+        monthly.set(t.ym, m)
+        if (t.categoryId) {
+          const key = `${t.ym}:${t.categoryId}`
+          const c = catMonthly.get(key) ?? { ym: t.ym, categoryId: t.categoryId, spent: 0 }
+          c.spent += t.amountMinor
+          catMonthly.set(key, c)
+        }
+      }
+
       await db.transactions.each((t) => {
         if (t.type === 'transfer') {
           if (t.fromAccountId) accDelta.set(t.fromAccountId, (accDelta.get(t.fromAccountId) ?? 0) - t.amountMinor)
           if (t.toAccountId) accDelta.set(t.toAccountId, (accDelta.get(t.toAccountId) ?? 0) + t.amountMinor)
+          // A spend-counting transfer also lands in the expense aggregates.
+          if (t.countsAsSpend && !t.excluded) addSpend(t)
           return
         }
         // Account balance always counts the real movement.
@@ -499,19 +556,13 @@ export async function rebuildRollups(): Promise<void> {
         }
         // Excluded transactions are left out of the analytics aggregates.
         if (t.excluded) return
-        const m = monthly.get(t.ym) ?? { income: 0, expense: 0 }
         if (t.type === 'income') {
+          const m = monthly.get(t.ym) ?? { income: 0, expense: 0 }
           m.income += t.amountMinor
+          monthly.set(t.ym, m)
         } else {
-          m.expense += t.amountMinor
-          if (t.categoryId) {
-            const key = `${t.ym}:${t.categoryId}`
-            const c = catMonthly.get(key) ?? { ym: t.ym, categoryId: t.categoryId, spent: 0 }
-            c.spent += t.amountMinor
-            catMonthly.set(key, c)
-          }
+          addSpend(t)
         }
-        monthly.set(t.ym, m)
       })
 
       await db.accountRollup.bulkPut(

@@ -46,7 +46,8 @@ export interface Transaction extends Synced {
   type: TransactionType
   /** Always a positive magnitude in minor units; sign is derived from `type`. */
   amountMinor: number
-  /** Required for income/expense, undefined for transfers. */
+  /** Required for income/expense, undefined for plain transfers. A transfer
+   *  with `countsAsSpend` carries the expense category the spend belongs to. */
   categoryId?: string
   /** Owning account for income/expense. */
   accountId?: string
@@ -61,6 +62,11 @@ export interface Transaction extends Synced {
   /** When true, kept in balances + the list but excluded from charts, monthly
    *  income/expense stats, category spend and budgets. */
   excluded?: boolean
+  /** Transfers only: count the moved amount as money spent (monthly expense,
+   *  category spend, budgets) — for round-up savings that belong to a
+   *  purchase's true cost. Balances are unaffected by the flag; the money
+   *  still just moves between accounts. */
+  countsAsSpend?: boolean
   createdAt: string
 }
 
