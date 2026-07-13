@@ -40,6 +40,12 @@ hash-based: `http://localhost:4173/#/settings`, `#/transactions`, `#/budgets`, �
 - **Seed data**: easiest realistic dataset is clicking "Add samples" on
   Settings (13 transactions, 4 accounts, 5 budgets). Raw-IDB seeding also
   works but needs a reload afterwards.
+- **Never edit the script with PowerShell string ops** — Windows PowerShell 5.1
+  `Get-Content`/`Set-Content` mangle emoji (UTF-8 read as ANSI), silently
+  breaking locators like `selectOption({ label: '🍔 Food' })`. Edit the
+  scratchpad source with the Edit tool and re-copy to the repo root.
+- **Transaction row subtitles join with ' · '** (e.g. "Food · Round-up"), so
+  match note text with a regex (`getByText(/Round-up/)`), not `exact: true`.
 
 ## Flows worth driving
 
