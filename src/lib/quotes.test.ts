@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { metaToQuote, yahooSymbol, cleanSeries, alignSeries, parseSearch, parseNews, parseTrending } from './quotes'
+import { metaToQuote, yahooSymbol, marketOf, cleanSeries, alignSeries, parseSearch, parseNews, parseTrending } from './quotes'
 
 describe('yahoo chart meta → quote', () => {
   it('computes price, day change and percent from meta', () => {
@@ -51,6 +51,32 @@ describe('yahooSymbol builder', () => {
   it('maps other exchanges (LSE, TSX)', () => {
     expect(yahooSymbol('HSBA', 'LSE')).toBe('HSBA.L')
     expect(yahooSymbol('SHOP', 'TSX')).toBe('SHOP.TO')
+  })
+})
+
+describe('marketOf', () => {
+  it('classifies ASX by exchange or .AX suffix', () => {
+    expect(marketOf('CBA', 'ASX')).toBe('ASX')
+    expect(marketOf('BHP.AX')).toBe('ASX')
+    expect(marketOf('cba.ax')).toBe('ASX')
+  })
+
+  it('classifies US tickers (default and US exchanges)', () => {
+    expect(marketOf('AAPL')).toBe('US')
+    expect(marketOf('NVDA', 'NASDAQ')).toBe('US')
+    expect(marketOf('BRK-B')).toBe('US') // share-class dash is not a crypto pair
+  })
+
+  it('classifies crypto pairs in either notation', () => {
+    expect(marketOf('BTC/USD')).toBe('Crypto')
+    expect(marketOf('ETH-USD')).toBe('Crypto')
+    expect(marketOf('SOL-AUD')).toBe('Crypto')
+  })
+
+  it('puts other exchanges and FX in Other', () => {
+    expect(marketOf('HSBA', 'LSE')).toBe('Other')
+    expect(marketOf('SHOP.TO')).toBe('Other')
+    expect(marketOf('USDAUD=X')).toBe('Other')
   })
 })
 

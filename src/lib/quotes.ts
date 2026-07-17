@@ -55,6 +55,26 @@ const EX_SUFFIX: Record<string, string> = {
   NZX: '.NZ', NZE: '.NZ',
 }
 
+export type MarketSection = 'ASX' | 'US' | 'Crypto' | 'Other'
+
+// Crypto pairs end in a quote currency (BTC-USD, ETH-AUD…). Share-class dashes
+// like BRK-B don't match, so they stay classified by exchange.
+const CRYPTO_PAIR = /-(USD|USDT|USDC|AUD|EUR|GBP|NZD|CAD|JPY|BTC|ETH)$/
+
+/**
+ * Classify a watchlist entry into a market section. Derived from the symbol +
+ * exchange the user stored (same inputs as yahooSymbol), so it needs no
+ * network call and works before quotes load.
+ */
+export function marketOf(symbol: string, exchange?: string): MarketSection {
+  const s = symbol.trim().toUpperCase()
+  const ex = (exchange || '').trim().toUpperCase()
+  if (s.includes('/') || CRYPTO_PAIR.test(s)) return 'Crypto'
+  if (ex === 'ASX' || s.endsWith('.AX')) return 'ASX'
+  if (s.includes('.') || s.includes('=')) return 'Other' // non-US Yahoo suffix or FX pair
+  return (EX_SUFFIX[ex] ?? '') === '' ? 'US' : 'Other' // mirrors yahooSymbol's default
+}
+
 /** Build a Yahoo symbol from a plain symbol + exchange (+ crypto pairing). */
 export function yahooSymbol(symbol: string, exchange?: string, opts?: { crypto?: boolean; quoteCurrency?: string }): string {
   let s = symbol.trim().toUpperCase()

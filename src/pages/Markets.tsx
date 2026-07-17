@@ -17,7 +17,7 @@ import { useWatchlist } from '@/hooks/useData'
 import { useUI } from '@/state/ui'
 import { addWatchItem, deleteWatchItem } from '@/db/repo'
 import { getMeta, setMeta } from '@/db/meta'
-import { fetchYahooSeries, yahooSymbol, searchSymbols, RateLimitError, type FullQuote, type SymbolMatch } from '@/lib/quotes'
+import { fetchYahooSeries, yahooSymbol, searchSymbols, marketOf, RateLimitError, type FullQuote, type SymbolMatch, type MarketSection } from '@/lib/quotes'
 import { nativeMoney, asOfLabel, pctOf, compactNumber } from '@/lib/marketFormat'
 import type { WatchItem } from '@/types/models'
 
@@ -32,6 +32,10 @@ interface QState {
 const cache = new Map<string, { q: FullQuote; closes: number[]; times: number[]; at: number }>()
 const TTL = 60_000
 const keyOf = (i: WatchItem) => `${i.symbol}|${i.exchange ?? ''}`
+
+type SectionKey = 'All' | MarketSection
+/** 'Other' is appended only when something actually falls into it. */
+const BASE_SECTIONS: SectionKey[] = ['All', 'ASX', 'US', 'Crypto']
 
 const RANGES = [
   { key: '1D', range: '1d', interval: '5m', intraday: true },
@@ -89,6 +93,7 @@ export function Markets() {
   const [refreshToken, setRefreshToken] = useState(0)
   const [draft, setDraft] = useState<{ symbol: string; exchange: string } | null>(null)
   const [detail, setDetail] = useState<Detail | null>(null)
+  const [section, setSection] = useState<SectionKey>('All')
   const busy = useRef(false)
 
   // Symbol search (in the Add modal).
@@ -113,7 +118,7 @@ export function Markets() {
     return () => clearTimeout(t)
   }, [query, draft])
 
-  const openAdd = () => { setQuery(''); setResults([]); setDraft({ symbol: '', exchange: '' }) }
+  const openAdd = () => { setQuery(''); setResults([]); setDraft({ symbol: '', exchange: section === 'ASX' ? 'ASX' : '' }) }
   const closeAdd = () => { setDraft(null); setQuery(''); setResults([]) }
   const pickResult = async (m: SymbolMatch) => {
     await addWatchItem({ symbol: m.symbol, exchange: '' })
@@ -208,6 +213,13 @@ export function Markets() {
   }
 
   const watchedYahoo = new Set((items ?? []).map((i) => yahooSymbol(i.symbol, i.exchange).toUpperCase()))
+
+  const counts: Record<SectionKey, number> = { All: items?.length ?? 0, ASX: 0, US: 0, Crypto: 0, Other: 0 }
+  for (const i of items ?? []) counts[marketOf(i.symbol, i.exchange)]++
+  const sections: SectionKey[] = counts.Other > 0 ? [...BASE_SECTIONS, 'Other'] : BASE_SECTIONS
+  // Fall back to All if the active section disappears (e.g. last Other item removed).
+  const activeSection = sections.includes(section) ? section : 'All'
+  const visibleItems = activeSection === 'All' ? items : items?.filter((i) => marketOf(i.symbol, i.exchange) === activeSection)
   const detailPct = detail?.closes ? pctOf(detail.closes) : null
   const dq = detail?.quote
 
@@ -245,8 +257,30 @@ export function Markets() {
               action={<Button onClick={openAdd}><IconPlus width={18} /> Add a ticker</Button>}
             />
           ) : (
+            <>
+            <div className="flex gap-1.5 mb-3 overflow-x-auto">
+              {sections.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setSection(s)}
+                  className={`shrink-0 h-8 px-3 rounded-lg text-xs font-medium transition-colors ${
+                    activeSection === s ? 'bg-accent text-white' : 'bg-elevated text-muted hover:text-fg'
+                  }`}
+                >
+                  {s}
+                  {counts[s] > 0 && <span className={activeSection === s ? 'opacity-75' : 'text-faint'}> {counts[s]}</span>}
+                </button>
+              ))}
+            </div>
+            {visibleItems && visibleItems.length === 0 ? (
+              <Card className="p-5 text-center">
+                <p className="text-sm text-muted mb-3">Nothing in {activeSection} yet.</p>
+                <Button variant="secondary" onClick={openAdd}><IconPlus width={18} /> Add a ticker</Button>
+              </Card>
+            ) : (
             <div className="space-y-2.5">
-              {items?.map((item) => {
+              {visibleItems?.map((item) => {
                 const s = quotes[item.id]
                 const q = s?.data
                 const spark = s?.closes
@@ -297,6 +331,8 @@ export function Markets() {
                 )
               })}
             </div>
+            )}
+            </>
           )}
           <p className="text-xs text-faint mt-3">
             Live data, news, and charts from Yahoo Finance (free, no key) — refreshed on demand and cached briefly.
