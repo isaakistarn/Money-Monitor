@@ -3,6 +3,8 @@ import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import { fileURLToPath, URL } from 'node:url'
 
+import { cloudflare } from "@cloudflare/vite-plugin";
+
 // `base` controls the public path the app is served from.
 // - Local dev / custom domain / user-site (username.github.io): leave as '/'.
 // - GitHub Pages *project* site (username.github.io/<repo>/): set VITE_BASE=/<repo>/.
@@ -47,37 +49,33 @@ export default defineConfig({
       },
     },
   },
-  plugins: [
-    cspQuotesProxy(),
-    react(),
-    VitePWA({
-      // 'prompt' so a new deploy waits for the user to apply it via the in-app
-      // update button, instead of silently swapping under them.
-      registerType: 'prompt',
-      includeAssets: ['icons/apple-touch-icon.png', 'favicon.svg'],
-      manifest: {
-        name: 'Money Monitor',
-        short_name: 'Money Monitor',
-        description: 'Money Monitor — a fast, private, local-first personal finance tracker.',
-        theme_color: '#0a0a0a',
-        background_color: '#0a0a0a',
-        display: 'standalone',
-        orientation: 'portrait',
-        scope: base,
-        start_url: base,
-        id: base,
-        icons: [
-          { src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png' },
-          { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' },
-          { src: 'icons/icon-512-maskable.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
-        ],
-      },
-      workbox: {
-        globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
-        cleanupOutdatedCaches: true,
-        clientsClaim: true,
-      },
-      devOptions: { enabled: false },
-    }),
-  ],
+  plugins: [cspQuotesProxy(), react(), VitePWA({
+    // 'prompt' so a new deploy waits for the user to apply it via the in-app
+    // update button, instead of silently swapping under them.
+    registerType: 'prompt',
+    includeAssets: ['icons/apple-touch-icon.png', 'favicon.svg'],
+    manifest: {
+      name: 'Money Monitor',
+      short_name: 'Money Monitor',
+      description: 'Money Monitor — a fast, private, local-first personal finance tracker.',
+      theme_color: '#0a0a0a',
+      background_color: '#0a0a0a',
+      display: 'standalone',
+      orientation: 'portrait',
+      scope: base,
+      start_url: base,
+      id: base,
+      icons: [
+        { src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+        { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' },
+        { src: 'icons/icon-512-maskable.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+      ],
+    },
+    workbox: {
+      globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
+      cleanupOutdatedCaches: true,
+      clientsClaim: true,
+    },
+    devOptions: { enabled: false },
+  }), cloudflare()],
 })
