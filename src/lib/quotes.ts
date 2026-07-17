@@ -18,6 +18,7 @@
 const PROXY = import.meta.env.VITE_QUOTES_PROXY || 'https://corsproxy.io/?url='
 const CHART = 'https://query1.finance.yahoo.com/v8/finance/chart/'
 const SEARCH = 'https://query1.finance.yahoo.com/v1/finance/search'
+const TRENDING = 'https://query1.finance.yahoo.com/v1/finance/trending/'
 
 export class RateLimitError extends Error {}
 
@@ -31,6 +32,12 @@ export interface FullQuote {
   percentChange: number
   /** Epoch ms of the last trade, if provided. */
   asOf?: number
+  previousClose?: number
+  dayHigh?: number
+  dayLow?: number
+  fiftyTwoWeekHigh?: number
+  fiftyTwoWeekLow?: number
+  volume?: number
 }
 
 // Map a user-facing exchange to Yahoo's ticker suffix.
@@ -72,6 +79,12 @@ async function throttle(): Promise<void> {
 
 type YMeta = Record<string, unknown>
 
+/** Positive finite number from Yahoo meta, else undefined (fields come and go per asset class). */
+function optNum(v: unknown): number | undefined {
+  const n = Number(v)
+  return Number.isFinite(n) && n > 0 ? n : undefined
+}
+
 /** Turn Yahoo chart `meta` into our quote shape (computing day change). */
 export function metaToQuote(meta: YMeta): FullQuote {
   const price = Number(meta.regularMarketPrice)
@@ -89,6 +102,12 @@ export function metaToQuote(meta: YMeta): FullQuote {
     change,
     percentChange: prev ? (change / prev) * 100 : 0,
     asOf: meta.regularMarketTime ? Number(meta.regularMarketTime) * 1000 : undefined,
+    previousClose: optNum(meta.previousClose ?? meta.chartPreviousClose),
+    dayHigh: optNum(meta.regularMarketDayHigh),
+    dayLow: optNum(meta.regularMarketDayLow),
+    fiftyTwoWeekHigh: optNum(meta.fiftyTwoWeekHigh),
+    fiftyTwoWeekLow: optNum(meta.fiftyTwoWeekLow),
+    volume: optNum(meta.regularMarketVolume),
   }
 }
 
@@ -227,4 +246,96 @@ export async function searchSymbols(query: string): Promise<SymbolMatch[]> {
   if (res.status === 429) throw new RateLimitError('Search is busy. Try again shortly.')
   if (!res.ok) throw new Error(`Search error (HTTP ${res.status}).`)
   return parseSearch((await res.json()) as SearchJson)
+}
+
+/* ------------------------------- News ------------------------------- */
+
+export interface NewsItem {
+  id: string
+  title: string
+  publisher: string
+  link: string
+  /** Epoch ms. */
+  publishedAt: number
+  thumbnail?: string
+  tickers: string[]
+}
+
+interface NewsJson {
+  news?: Array<{
+    uuid?: string
+    title?: string
+    publisher?: string
+    link?: string
+    providerPublishTime?: number
+    thumbnail?: { resolutions?: Array<{ url?: string; width?: number }> }
+    relatedTickers?: string[]
+  }>
+}
+
+/** Smallest thumbnail that's still ≥ the wanted width (news list renders ~140px). */
+function pickThumb(res?: Array<{ url?: string; width?: number }>): string | undefined {
+  if (!res?.length) return undefined
+  const usable = res.filter((r) => r.url && r.url.startsWith('https://'))
+  if (!usable.length) return undefined
+  const fit = usable.filter((r) => (r.width ?? 0) >= 140).sort((a, b) => (a.width ?? 0) - (b.width ?? 0))
+  return (fit[0] ?? usable[usable.length - 1]).url
+}
+
+/** Parse Yahoo's search response `news` array into clean items. */
+export function parseNews(j: NewsJson): NewsItem[] {
+  return (j.news ?? [])
+    .filter((n) => n.title && n.link && n.link.startsWith('https://'))
+    .map((n) => ({
+      id: n.uuid || (n.link as string),
+      title: n.title as string,
+      publisher: n.publisher || 'Yahoo Finance',
+      link: n.link as string,
+      publishedAt: (n.providerPublishTime ?? 0) * 1000,
+      thumbnail: pickThumb(n.thumbnail?.resolutions),
+      tickers: (n.relatedTickers ?? []).slice(0, 4),
+    }))
+}
+
+/** Latest news for a query — a ticker ("CBA.AX") or a topic ("stock market"). */
+export async function fetchNews(query: string, count = 8): Promise<NewsItem[]> {
+  await throttle()
+  const target = `${SEARCH}?q=${encodeURIComponent(query)}&quotesCount=0&newsCount=${count}&listsCount=0`
+  let res: Response
+  try {
+    res = await fetch(`${PROXY}${encodeURIComponent(target)}`)
+  } catch {
+    throw new Error('Could not reach the news service.')
+  }
+  if (res.status === 429) throw new RateLimitError('News service is busy. Try again shortly.')
+  if (!res.ok) throw new Error(`News error (HTTP ${res.status}).`)
+  return parseNews((await res.json()) as NewsJson)
+}
+
+/* ----------------------------- Trending ----------------------------- */
+
+interface TrendingJson {
+  finance?: { result?: Array<{ quotes?: Array<{ symbol?: string }> }> }
+}
+
+/** Parse Yahoo's trending response into a symbol list. */
+export function parseTrending(j: TrendingJson): string[] {
+  return (j.finance?.result?.[0]?.quotes ?? [])
+    .map((q) => q.symbol)
+    .filter((s): s is string => !!s)
+}
+
+/** Trending Yahoo symbols for a region (e.g. 'US', 'AU'). */
+export async function fetchTrending(region: string, count = 6): Promise<string[]> {
+  await throttle()
+  const target = `${TRENDING}${encodeURIComponent(region.toUpperCase())}?count=${count}`
+  let res: Response
+  try {
+    res = await fetch(`${PROXY}${encodeURIComponent(target)}`)
+  } catch {
+    throw new Error('Could not reach the trending service.')
+  }
+  if (res.status === 429) throw new RateLimitError('Trending service is busy. Try again shortly.')
+  if (!res.ok) throw new Error(`Trending error (HTTP ${res.status}).`)
+  return parseTrending((await res.json()) as TrendingJson).slice(0, count)
 }

@@ -15,7 +15,8 @@
                            here with your self-hosted worker's origin — strongly
                            recommended, since an OPEN proxy in connect-src is an
                            exfiltration route (see SECURITY.md).
-      img-src adds the Financial Modeling Prep logo endpoint. 'unsafe-inline' is
+      img-src adds the Financial Modeling Prep logo endpoint and Yahoo's image
+      CDN (s.yimg.com) for news thumbnails. 'unsafe-inline' is
       needed only for styles (React/Chart.js set inline style attributes); scripts
       get no such exception. Note: frame-ancestors / X-Frame-Options can't be set
       from a <meta> tag on GitHub Pages — clickjacking protection would need real
@@ -23,7 +24,7 @@
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://financialmodelingprep.com; font-src 'self' data:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://corsproxy.io; worker-src 'self'; manifest-src 'self'"
+      content="default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://financialmodelingprep.com https://s.yimg.com; font-src 'self' data:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://corsproxy.io; worker-src 'self'; manifest-src 'self'"
     />
     <meta name="referrer" content="strict-origin-when-cross-origin" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />

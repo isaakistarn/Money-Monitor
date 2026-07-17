@@ -14,6 +14,6 @@ export const NAV_ITEMS: NavItem[] = [
   { to: '/transactions', label: 'Transactions', short: 'Activity', Icon: IconList },
   { to: '/budgets', label: 'Budgets', Icon: IconTarget },
   { to: '/accounts', label: 'Accounts', Icon: IconWallet },
-  { to: '/watchlist', label: 'Watchlist', short: 'Watch', Icon: IconTrend },
+  { to: '/watchlist', label: 'Markets', short: 'Markets', Icon: IconTrend },
   { to: '/analytics', label: 'Analytics', short: 'Charts', Icon: IconChart },
 ]

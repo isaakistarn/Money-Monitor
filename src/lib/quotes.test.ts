@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { metaToQuote, yahooSymbol, cleanSeries, alignSeries, parseSearch } from './quotes'
+import { metaToQuote, yahooSymbol, cleanSeries, alignSeries, parseSearch, parseNews, parseTrending } from './quotes'
 
 describe('yahoo chart meta → quote', () => {
   it('computes price, day change and percent from meta', () => {
@@ -71,6 +71,61 @@ describe('parseSearch', () => {
 
   it('handles an empty response', () => {
     expect(parseSearch({})).toEqual([])
+  })
+})
+
+describe('parseNews', () => {
+  it('maps news items, picks a fitting thumbnail, and converts s→ms', () => {
+    const r = parseNews({
+      news: [
+        {
+          uuid: 'abc',
+          title: 'RBA holds rates',
+          publisher: 'Reuters',
+          link: 'https://finance.yahoo.com/news/rba',
+          providerPublishTime: 1_700_000_000,
+          thumbnail: {
+            resolutions: [
+              { url: 'https://s.yimg.com/big.jpg', width: 1200 },
+              { url: 'https://s.yimg.com/small.jpg', width: 140 },
+            ],
+          },
+          relatedTickers: ['CBA.AX', 'WBC.AX'],
+        },
+        { uuid: 'no-link', title: 'Missing link' },
+        { uuid: 'http-only', title: 'Insecure', link: 'http://example.com' },
+      ],
+    })
+    expect(r).toHaveLength(1)
+    expect(r[0]).toMatchObject({
+      id: 'abc',
+      title: 'RBA holds rates',
+      publisher: 'Reuters',
+      publishedAt: 1_700_000_000 * 1000,
+      thumbnail: 'https://s.yimg.com/small.jpg',
+      tickers: ['CBA.AX', 'WBC.AX'],
+    })
+  })
+
+  it('handles an empty response and missing optional fields', () => {
+    expect(parseNews({})).toEqual([])
+    const r = parseNews({ news: [{ title: 'Bare', link: 'https://x.com/a' }] })
+    expect(r[0]).toMatchObject({ id: 'https://x.com/a', publisher: 'Yahoo Finance', publishedAt: 0, tickers: [] })
+    expect(r[0].thumbnail).toBeUndefined()
+  })
+})
+
+describe('parseTrending', () => {
+  it('extracts symbols and skips empties', () => {
+    const r = parseTrending({
+      finance: { result: [{ quotes: [{ symbol: 'BHP.AX' }, {}, { symbol: 'NVDA' }] }] },
+    })
+    expect(r).toEqual(['BHP.AX', 'NVDA'])
+  })
+
+  it('handles an empty response', () => {
+    expect(parseTrending({})).toEqual([])
+    expect(parseTrending({ finance: {} })).toEqual([])
   })
 })
 
