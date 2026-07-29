@@ -7,11 +7,13 @@ import { useSettings } from '@/state/settings'
 import { cn } from '@/lib/cn'
 import { BrandMark } from '@/components/ui/BrandMark'
 import { RecurringBanner } from '@/components/transactions/RecurringBanner'
+import { useUpAutoSync } from '@/hooks/useUpAutoSync'
 
 export function AppLayout() {
   const { openEditor } = useUI()
   const { resolvedTheme, setTheme } = useSettings()
   const navigate = useNavigate()
+  useUpAutoSync()
 
   const toggleTheme = () => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')
 

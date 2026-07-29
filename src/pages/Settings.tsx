@@ -20,6 +20,7 @@ import { CategoryManager } from '@/components/CategoryManager'
 import { RecurringManager } from '@/components/RecurringManager'
 import { PaySplitManager } from '@/components/PaySplitManager'
 import { SyncCard } from '@/components/SyncCard'
+import { UpBankCard } from '@/components/UpBankCard'
 import { useTotalTransactionCount } from '@/hooks/useData'
 
 function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
@@ -163,6 +164,9 @@ export function Settings() {
 
       {/* Cross-device sync */}
       <SyncCard />
+
+      {/* Up Bank feed */}
+      <UpBankCard />
 
       {/* Categories */}
       <CategoryManager />

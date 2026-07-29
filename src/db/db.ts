@@ -92,6 +92,13 @@ export class FinanceDB extends Dexie {
     this.version(6).stores({
       portfolioSnapshots: 'date',
     })
+
+    // v7 adds an `externalId` index on transactions so bank-feed imports
+    // (Up Bank) can upsert by provider id without scanning the table.
+    this.version(7).stores({
+      transactions:
+        'id, date, ym, type, categoryId, accountId, fromAccountId, toAccountId, updatedAt, externalId, [ym+type], [accountId+date]',
+    })
   }
 }
 

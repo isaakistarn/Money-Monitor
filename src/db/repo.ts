@@ -92,6 +92,8 @@ export async function addTransaction(input: NewTransaction): Promise<Transaction
     ym: ymOf(input.date),
     note: input.note?.trim() || undefined,
     excluded: input.excluded || undefined,
+    externalId: input.externalId,
+    source: input.source,
     createdAt: input.createdAt ?? new Date().toISOString(),
     updatedAt: ts,
   }

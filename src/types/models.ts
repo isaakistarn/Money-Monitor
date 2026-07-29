@@ -67,6 +67,11 @@ export interface Transaction extends Synced {
    *  purchase's true cost. Balances are unaffected by the flag; the money
    *  still just moves between accounts. */
   countsAsSpend?: boolean
+  /** Bank-feed rows only: provider-scoped id, e.g. `up:<transactionId>`.
+   *  Imports upsert on this key so re-syncs never duplicate a charge. */
+  externalId?: string
+  /** Where the row came from; absent = entered by hand. */
+  source?: 'up'
   createdAt: string
 }
 
