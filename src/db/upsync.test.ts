@@ -44,13 +44,19 @@ function rawTxn(t: StubTxn) {
   }
 }
 
-/** Serve these transactions for every /transactions request. */
+/** Serve these transactions (honouring filter[since], like the real API). */
 function stubUpApi(txns: StubTxn[], accounts: Array<{ id: string; name: string; balanceMinor: number; type?: string }> = []) {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string) => {
+      const since = new URL(String(url)).searchParams.get('filter[since]')
       const body = String(url).includes('/transactions')
-        ? { data: txns.map(rawTxn), links: { next: null } }
+        ? {
+            data: txns
+              .filter((t) => !since || Date.parse(t.createdAt ?? todayIso) >= Date.parse(since))
+              .map(rawTxn),
+            links: { next: null },
+          }
         : String(url).includes('/accounts')
           ? {
               data: accounts.map((a) => ({
@@ -250,6 +256,39 @@ describe('Up Bank import', () => {
     // opening (520) + imported delta (−20) = live Up balance (500)
     expect(accounts[0].openingBalanceMinor).toBe(520_00)
     expect(accounts[0].openingBalanceMinor + (await balance(accounts[0].id))).toBe(500_00)
+  })
+
+  it('start-from-today (0 days) never pulls history, only charges made after connecting', async () => {
+    const yesterday = `${toISODate(new Date(Date.now() - 86_400_000))}T10:00:00+10:00`
+    const txns: StubTxn[] = [
+      { id: 'old', amountMinor: -10_00, accountId: 'up-1', createdAt: yesterday, settledAt: yesterday },
+    ]
+    stubUpApi(txns, [{ id: 'up-1', name: 'Up Spending', balanceMinor: 100_00 }])
+
+    const r = await completeUpConnect({
+      token: 'up:yeah:test',
+      choices: [
+        {
+          account: { id: 'up-1', displayName: 'Up Spending', accountType: 'TRANSACTIONAL', balanceMinor: 100_00 },
+          target: 'create',
+        },
+      ],
+      historyDays: 0,
+      roundUpsAsSpend: true,
+    })
+    expect(r).toEqual({ added: 0, updated: 0 })
+    expect(await db.transactions.count()).toBe(0)
+    // The created account still lands on the live balance with no history.
+    expect((await db.accounts.toArray())[0].openingBalanceMinor).toBe(100_00)
+
+    // A later sync must not let the resync overlap reach back past connect.
+    expect(await syncUpNow()).toEqual({ added: 0, updated: 0 })
+    expect(await db.transactions.count()).toBe(0)
+
+    // A charge made after connecting does come through.
+    txns.push({ id: 'new', amountMinor: -5_00, accountId: 'up-1', createdAt: new Date(Date.now() + 1000).toISOString() })
+    expect(await syncUpNow()).toEqual({ added: 1, updated: 0 })
+    expect((await db.transactions.toArray())[0]).toMatchObject({ type: 'expense', amountMinor: 5_00, externalId: 'up:new' })
   })
 })
 

@@ -35,6 +35,10 @@ export interface UpSettings {
    *  here so HELD charges that later settle (amount/date can change) are
    *  caught by the upsert. */
   watermark?: string
+  /** Hard floor chosen at connect time: no sync ever fetches earlier than
+   *  this, so users already tracking by hand can start from "today" without
+   *  the resync overlap dragging history (and duplicates) in. */
+  importFrom?: string
   lastSyncAt?: string
 }
 
@@ -111,15 +115,15 @@ function planTransaction(
  * only patched for amount/date (what changes when a HELD charge settles) —
  * category or note edits the user made locally are never overwritten.
  */
-export async function syncUpNow(sinceOverride?: string): Promise<UpSyncResult | null> {
+export async function syncUpNow(): Promise<UpSyncResult | null> {
   const s = await getUpSettings()
   if (!s?.token || Object.keys(s.accountMap).length === 0) return null
 
-  const since =
-    sinceOverride ??
-    (s.watermark
-      ? new Date(Date.parse(s.watermark) - RESYNC_OVERLAP_MS).toISOString()
-      : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
+  // Trailing overlap from the watermark, but never earlier than the floor
+  // the user chose at connect time.
+  const floorMs = s.importFrom ? Date.parse(s.importFrom) : Date.now() - 30 * 24 * 60 * 60 * 1000
+  const overlapMs = s.watermark ? Date.parse(s.watermark) - RESYNC_OVERLAP_MS : floorMs
+  const since = new Date(Math.max(floorMs, overlapMs)).toISOString()
 
   const fetched = await fetchUpTransactionsSince(s.token, since)
   // Oldest first so transfers/mirrors and the watermark advance predictably.
@@ -129,10 +133,12 @@ export async function syncUpNow(sinceOverride?: string): Promise<UpSyncResult | 
   const categoryFor = (upId: string | null) => matchUpCategory(upId, categories)
 
   const result: UpSyncResult = { added: 0, updated: 0 }
-  let watermark = s.watermark ?? ''
+  let watermark = s.watermark
 
   for (const t of fetched) {
-    if (t.createdAt > watermark) watermark = t.createdAt
+    // Compare parsed times — Up timestamps carry a UTC offset, so lexical
+    // comparison against other ISO forms would be unreliable.
+    if (!watermark || Date.parse(t.createdAt) > Date.parse(watermark)) watermark = t.createdAt
     const plan = planTransaction(t, s, categoryFor)
     if (plan === 'skip' || plan === 'mirror') continue
 
@@ -179,7 +185,7 @@ export interface UpConnectChoice {
 export interface UpConnectPlan {
   token: string
   choices: UpConnectChoice[]
-  /** How far back the first import reaches. */
+  /** How far back the first import reaches. 0 = no history, track from now. */
   historyDays: number
   roundUpsAsSpend: boolean
 }
@@ -224,11 +230,12 @@ export async function completeUpConnect(plan: UpConnectPlan): Promise<UpSyncResu
     token: plan.token,
     accountMap,
     roundUpsAsSpend: plan.roundUpsAsSpend,
+    // 0 days = start from right now: no history is pulled, ever — only
+    // charges made after connecting arrive on future syncs.
+    importFrom: new Date(Date.now() - plan.historyDays * 24 * 60 * 60 * 1000).toISOString(),
   } satisfies UpSettings)
 
-  // First import, reaching back the chosen history window.
-  const since = new Date(Date.now() - plan.historyDays * 24 * 60 * 60 * 1000).toISOString()
-  const result = (await syncUpNow(since)) ?? { added: 0, updated: 0 }
+  const result = (await syncUpNow()) ?? { added: 0, updated: 0 }
 
   // Anchor created accounts to the real Up balance.
   for (const c of created) {

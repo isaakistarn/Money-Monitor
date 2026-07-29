@@ -31,6 +31,7 @@ function relativeTime(iso: string | undefined): string {
 }
 
 const HISTORY_OPTIONS = [
+  { days: 0, label: 'Nothing — start from today' },
   { days: 30, label: 'Last 30 days' },
   { days: 90, label: 'Last 3 months' },
   { days: 365, label: 'Last 12 months' },
@@ -50,7 +51,7 @@ export function UpBankCard() {
   // Connect step 2: the Up accounts behind the token + where each should land.
   const [pending, setPending] = useState<UpAccount[] | null>(null)
   const [targets, setTargets] = useState<Record<string, string>>({})
-  const [historyDays, setHistoryDays] = useState(30)
+  const [historyDays, setHistoryDays] = useState(0)
   const [roundUps, setRoundUps] = useState(true)
 
   if (settings === undefined) {
@@ -224,7 +225,10 @@ export function UpBankCard() {
         </div>
         <div className="border-t border-border my-4" />
         <div className="space-y-3">
-          <Field label="Import history" hint="Older transactions can always be brought in later by reconnecting.">
+          <Field
+            label="Import history"
+            hint="Already tracking by hand? Keep “start from today” — only new charges import, so nothing you’ve entered gets duplicated. More history can be brought in later by reconnecting."
+          >
             <Select value={String(historyDays)} onChange={(e) => setHistoryDays(Number(e.target.value))}>
               {HISTORY_OPTIONS.map((o) => (
                 <option key={o.days} value={o.days}>{o.label}</option>
