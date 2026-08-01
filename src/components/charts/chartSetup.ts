@@ -36,3 +36,13 @@ export const CHART_PALETTE = [
   '#fb7185', '#22d3ee', '#facc15', '#4ade80', '#c084fc',
   '#f97316', '#2dd4bf',
 ]
+
+/** Greens & teals for income sources, so income reads distinctly from spending. */
+export const INCOME_PALETTE = [
+  '#34d399', '#22d3ee', '#a3e635', '#2dd4bf', '#38bdf8',
+  '#4ade80', '#14b8a6', '#84cc16', '#5eead4', '#06b6d4',
+]
+
+/** The two colours income and expenses always use across the app's charts. */
+export const INCOME_COLOR = '#34d399'
+export const EXPENSE_COLOR = '#fb7185'

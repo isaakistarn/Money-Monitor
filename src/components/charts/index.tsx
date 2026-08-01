@@ -24,4 +24,4 @@ function ChartSkeleton() {
 export const DoughnutChart = lazyChart((m) => m.DoughnutChart)
 export const TrendLineChart = lazyChart((m) => m.TrendLineChart)
 export const AreaLineChart = lazyChart((m) => m.AreaLineChart)
-export const ComparisonBarChart = lazyChart((m) => m.ComparisonBarChart)
+export const MultiBarChart = lazyChart((m) => m.MultiBarChart)

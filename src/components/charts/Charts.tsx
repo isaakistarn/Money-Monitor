@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { Doughnut, Line, Bar } from 'react-chartjs-2'
 import type { ChartOptions } from 'chart.js'
-import { cssVar, CHART_PALETTE } from './chartSetup'
+import { cssVar, CHART_PALETTE, INCOME_COLOR, EXPENSE_COLOR } from './chartSetup'
 import { useSettings } from '@/state/settings'
 import { formatMoney } from '@/lib/money'
 
@@ -28,10 +28,12 @@ export function DoughnutChart({
   labels,
   values,
   currency,
+  palette = CHART_PALETTE,
 }: {
   labels: string[]
   values: number[]
   currency: string
+  palette?: string[]
 }) {
   useThemeTick()
   const data = useMemo(
@@ -40,13 +42,13 @@ export function DoughnutChart({
       datasets: [
         {
           data: values,
-          backgroundColor: labels.map((_, i) => CHART_PALETTE[i % CHART_PALETTE.length]),
+          backgroundColor: labels.map((_, i) => palette[i % palette.length]),
           borderWidth: 0,
           hoverOffset: 6,
         },
       ],
     }),
-    [labels, values],
+    [labels, values, palette],
   )
   const options: ChartOptions<'doughnut'> = {
     cutout: '66%',
@@ -84,7 +86,7 @@ export function TrendLineChart({
         {
           label: 'Income',
           data: income,
-          borderColor: '#34d399',
+          borderColor: INCOME_COLOR,
           backgroundColor: 'rgba(52,211,153,0.12)',
           fill: true,
           tension: 0.35,
@@ -94,7 +96,7 @@ export function TrendLineChart({
         {
           label: 'Expenses',
           data: expense,
-          borderColor: '#fb7185',
+          borderColor: EXPENSE_COLOR,
           backgroundColor: 'rgba(251,113,133,0.12)',
           fill: true,
           tension: 0.35,
@@ -177,16 +179,27 @@ export function AreaLineChart({
   return <Line data={data} options={options} />
 }
 
-export function ComparisonBarChart({
+export interface BarSeries {
+  label: string
+  values: number[]
+  color: string
+}
+
+/**
+ * Several bar series on one axis — grouped side-by-side (income vs spending)
+ * or stacked (income broken down by source). Unlike the single-series charts
+ * the tooltip names the series, since the colour alone no longer says which.
+ */
+export function MultiBarChart({
   labels,
-  values,
+  series,
   currency,
-  color = '#60a5fa',
+  stacked = false,
 }: {
   labels: string[]
-  values: number[]
+  series: BarSeries[]
   currency: string
-  color?: string
+  stacked?: boolean
 }) {
   const theme = useThemeTick()
   const grid = cssVar('--border', 0.6)
@@ -194,16 +207,34 @@ export function ComparisonBarChart({
   const data = useMemo(
     () => ({
       labels,
-      datasets: [{ data: values, backgroundColor: color, borderRadius: 6, maxBarThickness: 38 }],
+      datasets: series.map((s) => ({
+        label: s.label,
+        data: s.values,
+        backgroundColor: s.color,
+        borderRadius: 4,
+        maxBarThickness: 38,
+      })),
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [labels, values, theme, color],
+    [labels, series, theme],
   )
   const options: ChartOptions<'bar'> = {
-    plugins: moneyTooltip(currency) as ChartOptions<'bar'>['plugins'],
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        callbacks: {
+          label: (ctx) => ` ${ctx.dataset.label}: ${formatMoney(ctx.parsed.y ?? 0, currency)}`,
+        },
+      },
+    },
     scales: {
-      x: { grid: { display: false }, ticks: { color: tickColor, font: { size: 11 }, maxTicksLimit: 12, autoSkip: true } },
+      x: {
+        stacked,
+        grid: { display: false },
+        ticks: { color: tickColor, font: { size: 11 }, maxTicksLimit: 12, autoSkip: true },
+      },
       y: {
+        stacked,
         grid: { color: grid },
         ticks: {
           color: tickColor,
@@ -213,6 +244,7 @@ export function ComparisonBarChart({
       },
     },
     maintainAspectRatio: false,
+    interaction: { mode: 'index', intersect: false },
   }
   return <Bar data={data} options={options} />
 }

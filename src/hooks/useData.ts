@@ -4,6 +4,7 @@ import { accountEffect } from '@/db/repo'
 import { isLiability, type Account } from '@/types/models'
 import { currentYm, recentYms, recentDays, recentWeekStarts, weekStartISO, addDaysISO } from '@/lib/date'
 import { valueHolding, holdingValueMinor } from '@/lib/portfolio'
+import { incomeByCategory, incomeSeriesByMonth, incomeSlices } from '@/lib/income'
 
 /** All accounts with their live derived balance (opening + rollup delta). */
 export function useAccountsWithBalances() {
@@ -102,6 +103,33 @@ export function useCategorySpend(ym = currentYm()) {
       }))
       .sort((a, b) => b.spentMinor - a.spentMinor)
   }, [ym])
+}
+
+/**
+ * Income per source category for a month, sorted desc — the mirror of
+ * `useCategorySpend`. Read from the raw transactions (via the [ym+type] index)
+ * because the rollup tables only track a single monthly income total.
+ */
+export function useCategoryIncome(ym = currentYm()) {
+  return useLiveQuery(async () => {
+    const [rows, cats] = await Promise.all([
+      db.transactions.where('[ym+type]').equals([ym, 'income']).toArray(),
+      db.categories.toArray(),
+    ])
+    return incomeSlices(incomeByCategory(rows), cats)
+  }, [ym])
+}
+
+/** Per-source income across the last N months, oldest month first. */
+export function useIncomeSourceTrend(months = 6) {
+  return useLiveQuery(async () => {
+    const yms = recentYms(months)
+    const [rows, cats] = await Promise.all([
+      db.transactions.where('ym').anyOf(yms).toArray(),
+      db.categories.toArray(),
+    ])
+    return { yms, series: incomeSeriesByMonth(rows, yms, cats) }
+  }, [months])
 }
 
 export function useMonthlyTrend(months = 6) {

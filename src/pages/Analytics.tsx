@@ -4,10 +4,12 @@ import { Money } from '@/components/ui/Money'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { MonthNav } from '@/components/MonthNav'
 import { Select } from '@/components/ui/Field'
-import { DoughnutChart, TrendLineChart, ComparisonBarChart, AreaLineChart } from '@/components/charts'
+import { DoughnutChart, TrendLineChart, MultiBarChart, AreaLineChart } from '@/components/charts'
 import { IconChart } from '@/components/ui/icons'
 import {
   useCategorySpend,
+  useCategoryIncome,
+  useIncomeSourceTrend,
   useMonthlyTrend,
   useDailyTrend,
   useWeeklyTrend,
@@ -17,7 +19,12 @@ import {
 } from '@/hooks/useData'
 import { useCurrency } from '@/state/settings'
 import { ymLabel, dayLabel, currentYm } from '@/lib/date'
-import { CHART_PALETTE } from '@/components/charts/chartSetup'
+import {
+  CHART_PALETTE,
+  INCOME_PALETTE,
+  INCOME_COLOR,
+  EXPENSE_COLOR,
+} from '@/components/charts/chartSetup'
 
 /** A compact segmented button group used for the chart toggles. */
 function Segmented<T extends string | number>({
@@ -49,10 +56,19 @@ function Segmented<T extends string | number>({
 export function Analytics() {
   const currency = useCurrency()
 
-  // Spending-by-category (pie) is browsed month-by-month.
+  // The two category breakdowns (pies) share one month, so browsing to a month
+  // moves "where it went" and "where it came from" together.
   const [ym, setYm] = useState(currentYm())
   const spend = useCategorySpend(ym)
   const spendTotal = (spend ?? []).reduce((s, c) => s + c.spentMinor, 0)
+  const income = useCategoryIncome(ym)
+  const incomeTotal = (income ?? []).reduce((s, c) => s + c.incomeMinor, 0)
+
+  // Income broken down by source across recent months (stacked bars).
+  const [srcN, setSrcN] = useState(6)
+  const incomeSources = useIncomeSourceTrend(srcN)
+  const srcSeries = incomeSources?.series ?? []
+  const hasIncomeSources = srcSeries.some((s) => s.values.some((v) => v > 0))
 
   // Shared time-series (queried at the widest range, then sliced per view).
   const daily = useDailyTrend(90)
@@ -71,7 +87,7 @@ export function Analytics() {
       : trendRows.map((r) => ymLabel((r as { ym: string }).ym).split(' ')[0])
   const hasTrend = trendRows.some((t) => t.incomeMinor || t.expenseMinor)
 
-  // Spending comparison (bars) — daily / weekly / monthly.
+  // Income vs spending comparison (grouped bars) — daily / weekly / monthly.
   const [cmpMode, setCmpMode] = useState<'day' | 'week' | 'month'>('week')
   const cmpRows =
     cmpMode === 'day'
@@ -84,7 +100,7 @@ export function Analytics() {
     if (cmpMode === 'week') return dayLabel((r as { weekStart: string }).weekStart)
     return ymLabel((r as { ym: string }).ym).split(' ')[0]
   })
-  const hasCmp = cmpRows.some((r) => r.expenseMinor)
+  const hasCmp = cmpRows.some((r) => r.expenseMinor || r.incomeMinor)
 
   // Account balance over time.
   const accounts = useAccounts()
@@ -130,6 +146,39 @@ export function Analytics() {
                   <span className="flex-1 truncate">{c.name}</span>
                   <span className="text-faint text-xs">{c.pct.toFixed(0)}%</span>
                   <Money minor={c.spentMinor} className="font-medium tabular-nums w-20 text-right" />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </Card>
+
+      {/* Income by source (pie) — the mirror of spending by category */}
+      <Card className="p-5">
+        <SectionHeader title="Income by Source" action={<MonthNav ym={ym} onChange={setYm} />} />
+        {income && income.length === 0 ? (
+          <EmptyState icon={<IconChart width={30} />} title="No income this month" />
+        ) : (
+          <div className="grid sm:grid-cols-2 gap-6 items-center">
+            <div className="relative h-60">
+              <DoughnutChart
+                labels={(income ?? []).map((c) => c.name)}
+                values={(income ?? []).map((c) => c.incomeMinor)}
+                currency={currency}
+                palette={INCOME_PALETTE}
+              />
+              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                <span className="text-xs text-muted">Total</span>
+                <Money minor={incomeTotal} className="text-lg font-bold" />
+              </div>
+            </div>
+            <div className="space-y-2">
+              {(income ?? []).map((c, i) => (
+                <div key={c.categoryId} className="flex items-center gap-2.5 text-sm">
+                  <span className="h-3 w-3 rounded-sm shrink-0" style={{ background: INCOME_PALETTE[i % INCOME_PALETTE.length] }} />
+                  <span className="flex-1 truncate">{c.name}</span>
+                  <span className="text-faint text-xs">{c.pct.toFixed(0)}%</span>
+                  <Money minor={c.incomeMinor} className="font-medium tabular-nums w-20 text-right" />
                 </div>
               ))}
             </div>
@@ -193,10 +242,61 @@ export function Analytics() {
         </div>
       </Card>
 
-      {/* Spending comparison (bar) — daily / weekly / monthly */}
+      {/* Income sources over time (stacked bars) */}
       <Card className="p-5">
         <SectionHeader
-          title="Spending Comparison"
+          title="Income Sources Over Time"
+          action={
+            <Segmented
+              value={srcN}
+              onChange={setSrcN}
+              options={[
+                { value: 3, label: '3m' },
+                { value: 6, label: '6m' },
+                { value: 12, label: '12m' },
+              ]}
+            />
+          }
+        />
+        {!hasIncomeSources ? (
+          <EmptyState
+            icon={<IconChart width={30} />}
+            title="No income recorded yet"
+            message="Add income transactions and each source stacks up here month by month."
+          />
+        ) : (
+          <>
+            <div className="h-56">
+              <MultiBarChart
+                labels={(incomeSources?.yms ?? []).map((m) => ymLabel(m).split(' ')[0])}
+                series={srcSeries.map((s, i) => ({
+                  label: s.name,
+                  values: s.values,
+                  color: INCOME_PALETTE[i % INCOME_PALETTE.length],
+                }))}
+                currency={currency}
+                stacked
+              />
+            </div>
+            <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-muted">
+              {srcSeries.map((s, i) => (
+                <span key={s.categoryId} className="inline-flex items-center gap-1.5">
+                  <span
+                    className="h-2 w-2 rounded-full"
+                    style={{ background: INCOME_PALETTE[i % INCOME_PALETTE.length] }}
+                  />
+                  {s.name}
+                </span>
+              ))}
+            </div>
+          </>
+        )}
+      </Card>
+
+      {/* Income vs spending (grouped bars) — daily / weekly / monthly */}
+      <Card className="p-5">
+        <SectionHeader
+          title="Income vs Spending"
           action={
             <Segmented
               value={cmpMode}
@@ -213,13 +313,20 @@ export function Analytics() {
           <EmptyState icon={<IconChart width={30} />} title="Not enough data yet" />
         ) : (
           <div className="h-56">
-            <ComparisonBarChart
+            <MultiBarChart
               labels={cmpLabels}
-              values={cmpRows.map((r) => r.expenseMinor)}
+              series={[
+                { label: 'Income', values: cmpRows.map((r) => r.incomeMinor), color: INCOME_COLOR },
+                { label: 'Spending', values: cmpRows.map((r) => r.expenseMinor), color: EXPENSE_COLOR },
+              ]}
               currency={currency}
             />
           </div>
         )}
+        <div className="mt-3 flex gap-4 text-xs text-muted">
+          <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-positive" /> Income</span>
+          <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-negative" /> Spending</span>
+        </div>
       </Card>
 
       {/* Account balance over time (line) */}
