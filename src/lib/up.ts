@@ -39,6 +39,8 @@ export interface UpTransaction {
   accountId: string
   /** Set when the movement is between two of the user's own Up accounts. */
   transferAccountId: string | null
+  /** Up's label for the movement kind, e.g. 'Purchase', 'Transfer', 'Round Up'. */
+  transactionType: string | null
   /** Up category id, e.g. 'restaurants-and-cafes'. */
   categoryId: string | null
 }
@@ -104,6 +106,7 @@ interface RawTransaction {
     amount: UpMoney
     createdAt: string
     settledAt: string | null
+    transactionType?: string | null
   }
   relationships: {
     account: { data: { id: string } | null }
@@ -137,6 +140,7 @@ export async function fetchUpTransactionsSince(token: string, sinceIso: string):
         settledAt: t.attributes.settledAt,
         accountId: t.relationships.account.data.id,
         transferAccountId: t.relationships.transferAccount?.data?.id ?? null,
+        transactionType: t.attributes.transactionType ?? null,
         categoryId: t.relationships.category?.data?.id ?? null,
       })
     }
@@ -152,9 +156,15 @@ export function upTransactionDate(t: Pick<UpTransaction, 'createdAt' | 'settledA
   return toISODate(new Date(t.settledAt ?? t.createdAt))
 }
 
-/** Up round-up movements are internal transfers titled "Round Up". */
-export function isUpRoundUp(t: Pick<UpTransaction, 'description' | 'transferAccountId'>): boolean {
-  return !!t.transferAccountId && /^round[\s-]?up$/i.test(t.description.trim())
+const ROUND_UP_RE = /^round[\s-]?up$/i
+
+/**
+ * Up round-ups arrive as a SINGLE transaction: the inflow into the saver,
+ * labelled "Round Up". The spending side exists only as a `roundUp` attribute
+ * on the original purchase — Up never emits a matching outflow row.
+ */
+export function isUpRoundUp(t: Pick<UpTransaction, 'description' | 'transactionType'>): boolean {
+  return ROUND_UP_RE.test(t.transactionType ?? '') || ROUND_UP_RE.test(t.description.trim())
 }
 
 /**

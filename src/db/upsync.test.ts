@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { db } from './db'
-import { addAccount } from './repo'
+import { addAccount, addTransaction } from './repo'
 import { setMeta } from './meta'
 import { completeUpConnect, syncUpNow, type UpSettings } from './upsync'
 import { matchUpCategory } from '@/lib/up'
@@ -19,6 +19,7 @@ interface StubTxn {
   createdAt?: string
   settledAt?: string | null
   transferAccountId?: string | null
+  transactionType?: string | null
   categoryId?: string | null
 }
 
@@ -35,6 +36,7 @@ function rawTxn(t: StubTxn) {
       amount: { currencyCode: 'AUD', value: String(t.amountMinor / 100), valueInBaseUnits: t.amountMinor },
       createdAt: t.createdAt ?? todayIso,
       settledAt: t.settledAt !== undefined ? t.settledAt : (t.createdAt ?? todayIso),
+      transactionType: t.transactionType ?? null,
     },
     relationships: {
       account: { data: { id: t.accountId } },
@@ -111,7 +113,7 @@ describe('Up Bank import', () => {
     stubUpApi([{ id: 'a', amountMinor: -1250, accountId: 'up-1', description: 'COFFEE SHOP', categoryId: 'restaurants-and-cafes' }])
 
     const r = await syncUpNow()
-    expect(r).toEqual({ added: 1, updated: 0 })
+    expect(r).toEqual({ added: 1, updated: 0, matched: 0 })
 
     const rows = await db.transactions.toArray()
     expect(rows).toHaveLength(1)
@@ -149,7 +151,7 @@ describe('Up Bank import', () => {
     ])
 
     const r = await syncUpNow()
-    expect(r).toEqual({ added: 1, updated: 0 })
+    expect(r).toEqual({ added: 1, updated: 0, matched: 0 })
     const rows = await db.transactions.toArray()
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({
@@ -165,15 +167,25 @@ describe('Up Bank import', () => {
     expect((await db.monthlyStats.get(currentYm()))?.expenseMinor ?? 0).toBe(0)
   })
 
-  it('marks Up round-ups as spend-counting Spare Change when enabled', async () => {
+  // Round-ups arrive from Up as a SINGLE positive row in the saver — there is
+  // never a matching outflow row on the spending account.
+  it('imports round-ups (saver-side inflow only) as a spend-counting transfer', async () => {
     const spend = await addAccount({ name: 'Spending', type: 'bank', openingBalanceMinor: 0 })
     const saver = await addAccount({ name: 'Saver', type: 'savings', openingBalanceMinor: 0 })
     await connectSettings({ accountMap: { 'up-1': spend.id, 'up-2': saver.id }, roundUpsAsSpend: true })
-    stubUpApi([{ id: 'ru', amountMinor: -73, accountId: 'up-1', transferAccountId: 'up-2', description: 'Round Up' }])
+    stubUpApi([{ id: 'ru', amountMinor: 73, accountId: 'up-2', transferAccountId: 'up-1', description: 'Round Up', transactionType: 'Round Up' }])
 
-    await syncUpNow()
+    const r = await syncUpNow()
+    expect(r).toEqual({ added: 1, updated: 0, matched: 0 })
     const rows = await db.transactions.toArray()
-    expect(rows[0]).toMatchObject({ type: 'transfer', amountMinor: 73, countsAsSpend: true })
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({
+      type: 'transfer',
+      amountMinor: 73,
+      fromAccountId: spend.id,
+      toAccountId: saver.id,
+      countsAsSpend: true,
+    })
     // Balances move like a transfer AND the cents count as monthly spend.
     expect(await balance(spend.id)).toBe(-73)
     expect(await balance(saver.id)).toBe(73)
@@ -184,12 +196,95 @@ describe('Up Bank import', () => {
     const spend = await addAccount({ name: 'Spending', type: 'bank', openingBalanceMinor: 0 })
     const saver = await addAccount({ name: 'Saver', type: 'savings', openingBalanceMinor: 0 })
     await connectSettings({ accountMap: { 'up-1': spend.id, 'up-2': saver.id }, roundUpsAsSpend: false })
-    stubUpApi([{ id: 'ru', amountMinor: -73, accountId: 'up-1', transferAccountId: 'up-2', description: 'Round Up' }])
+    stubUpApi([{ id: 'ru', amountMinor: 73, accountId: 'up-2', transferAccountId: 'up-1', description: 'Round Up', transactionType: 'Round Up' }])
 
     await syncUpNow()
     const rows = await db.transactions.toArray()
+    expect(rows[0]).toMatchObject({ type: 'transfer', fromAccountId: spend.id, toAccountId: saver.id })
     expect(rows[0].countsAsSpend).toBeUndefined()
     expect((await db.monthlyStats.get(currentYm()))?.expenseMinor ?? 0).toBe(0)
+  })
+
+  it('records round-ups into an unmapped saver as an expense from the spending account', async () => {
+    const spend = await addAccount({ name: 'Spending', type: 'bank', openingBalanceMinor: 0 })
+    await connectSettings({ accountMap: { 'up-1': spend.id }, roundUpsAsSpend: true })
+    stubUpApi([{ id: 'ru', amountMinor: 27, accountId: 'up-saver', transferAccountId: 'up-1', description: 'Round Up', transactionType: 'Round Up' }])
+
+    const r = await syncUpNow()
+    expect(r).toEqual({ added: 1, updated: 0, matched: 0 })
+    const rows = await db.transactions.toArray()
+    // The cents really left the tracked account, so the balance must follow.
+    expect(rows[0]).toMatchObject({ type: 'expense', amountMinor: 27, accountId: spend.id })
+    expect(await balance(spend.id)).toBe(-27)
+  })
+
+  it('claims a hand-entered pay instead of importing the deposit twice', async () => {
+    const bank = await addAccount({ name: 'Spending', type: 'bank', openingBalanceMinor: 0 })
+    await connectSettings({ accountMap: { 'up-1': bank.id } })
+    // The user typed their salary in (e.g. via a pay split) before the feed ran.
+    const manual = await addTransaction({
+      type: 'income',
+      amountMinor: 2500_00,
+      accountId: bank.id,
+      date: toISODate(new Date()),
+      note: 'Salary',
+    })
+    stubUpApi([{ id: 'pay', amountMinor: 2500_00, accountId: 'up-1', description: 'EMPLOYER PTY LTD' }])
+
+    const r = await syncUpNow()
+    expect(r).toEqual({ added: 0, updated: 0, matched: 1 })
+    const rows = await db.transactions.toArray()
+    expect(rows).toHaveLength(1)
+    // The user's row was claimed by the feed — note stays, feed id attached.
+    expect(rows[0]).toMatchObject({ id: manual.id, externalId: 'up:pay', source: 'up', note: 'Salary' })
+    // Income is counted once, not twice.
+    expect((await db.monthlyStats.get(currentYm()))?.incomeMinor).toBe(2500_00)
+    expect(await balance(bank.id)).toBe(2500_00)
+
+    // Re-syncing doesn't create anything either: the claimed row now upserts.
+    expect(await syncUpNow()).toEqual({ added: 0, updated: 0, matched: 0 })
+    expect(await db.transactions.count()).toBe(1)
+  })
+
+  it('claims a hand-entered transfer when the matching Up transfer arrives', async () => {
+    const spend = await addAccount({ name: 'Spending', type: 'bank', openingBalanceMinor: 0 })
+    const saver = await addAccount({ name: 'Saver', type: 'savings', openingBalanceMinor: 0 })
+    await connectSettings({ accountMap: { 'up-1': spend.id, 'up-2': saver.id } })
+    // A pay-split allocation entered by hand…
+    await addTransaction({
+      type: 'transfer',
+      amountMinor: 300_00,
+      fromAccountId: spend.id,
+      toAccountId: saver.id,
+      date: toISODate(new Date()),
+    })
+    // …then the real movement lands in Up (both sides, as usual).
+    stubUpApi([
+      { id: 'out', amountMinor: -300_00, accountId: 'up-1', transferAccountId: 'up-2', description: 'Transfer to Saver' },
+      { id: 'in', amountMinor: 300_00, accountId: 'up-2', transferAccountId: 'up-1', description: 'Transfer from Spending' },
+    ])
+
+    const r = await syncUpNow()
+    expect(r).toEqual({ added: 0, updated: 0, matched: 1 })
+    expect(await db.transactions.count()).toBe(1)
+    expect(await balance(spend.id)).toBe(-300_00)
+    expect(await balance(saver.id)).toBe(300_00)
+  })
+
+  it('does not claim rows dated outside the match window', async () => {
+    const bank = await addAccount({ name: 'Spending', type: 'bank', openingBalanceMinor: 0 })
+    await connectSettings({ accountMap: { 'up-1': bank.id } })
+    await addTransaction({
+      type: 'income',
+      amountMinor: 2500_00,
+      accountId: bank.id,
+      date: toISODate(new Date(Date.now() - 10 * 86_400_000)),
+    })
+    stubUpApi([{ id: 'pay', amountMinor: 2500_00, accountId: 'up-1', description: 'EMPLOYER PTY LTD' }])
+
+    const r = await syncUpNow()
+    expect(r).toEqual({ added: 1, updated: 0, matched: 0 })
+    expect(await db.transactions.count()).toBe(2)
   })
 
   it('re-sync updates a settled charge in place — no duplicates, rollups follow', async () => {
@@ -202,7 +297,7 @@ describe('Up Bank import', () => {
     // The hold settles for a different amount (e.g. tip added).
     stubUpApi([{ id: 'hold', amountMinor: -12_00, accountId: 'up-1', status: 'SETTLED' }])
     const r = await syncUpNow()
-    expect(r).toEqual({ added: 0, updated: 1 })
+    expect(r).toEqual({ added: 0, updated: 1, matched: 0 })
 
     const rows = await db.transactions.toArray()
     expect(rows).toHaveLength(1)
@@ -218,7 +313,7 @@ describe('Up Bank import', () => {
 
     await syncUpNow()
     const r = await syncUpNow()
-    expect(r).toEqual({ added: 0, updated: 0 })
+    expect(r).toEqual({ added: 0, updated: 0, matched: 0 })
     expect(await db.transactions.count()).toBe(1)
   })
 
@@ -228,7 +323,7 @@ describe('Up Bank import', () => {
     stubUpApi([{ id: 'other', amountMinor: -9_99, accountId: 'up-unmapped' }])
 
     const r = await syncUpNow()
-    expect(r).toEqual({ added: 0, updated: 0 })
+    expect(r).toEqual({ added: 0, updated: 0, matched: 0 })
     expect(await db.transactions.count()).toBe(0)
   })
 
@@ -276,18 +371,18 @@ describe('Up Bank import', () => {
       historyDays: 0,
       roundUpsAsSpend: true,
     })
-    expect(r).toEqual({ added: 0, updated: 0 })
+    expect(r).toEqual({ added: 0, updated: 0, matched: 0 })
     expect(await db.transactions.count()).toBe(0)
     // The created account still lands on the live balance with no history.
     expect((await db.accounts.toArray())[0].openingBalanceMinor).toBe(100_00)
 
     // A later sync must not let the resync overlap reach back past connect.
-    expect(await syncUpNow()).toEqual({ added: 0, updated: 0 })
+    expect(await syncUpNow()).toEqual({ added: 0, updated: 0, matched: 0 })
     expect(await db.transactions.count()).toBe(0)
 
     // A charge made after connecting does come through.
     txns.push({ id: 'new', amountMinor: -5_00, accountId: 'up-1', createdAt: new Date(Date.now() + 1000).toISOString() })
-    expect(await syncUpNow()).toEqual({ added: 1, updated: 0 })
+    expect(await syncUpNow()).toEqual({ added: 1, updated: 0, matched: 0 })
     expect((await db.transactions.toArray())[0]).toMatchObject({ type: 'expense', amountMinor: 5_00, externalId: 'up:new' })
   })
 })

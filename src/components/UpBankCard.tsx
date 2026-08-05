@@ -114,12 +114,12 @@ export function UpBankCard() {
     try {
       const r = await syncUpNow()
       if (!r) return
-      toast(
-        r.added === 0 && r.updated === 0
-          ? 'Up is in sync — nothing new'
-          : `Up sync: ${r.added} new${r.updated > 0 ? `, ${r.updated} updated` : ''}`,
-        'success',
-      )
+      const parts = [
+        r.added > 0 && `${r.added} new`,
+        r.matched > 0 && `${r.matched} matched to entries you'd added`,
+        r.updated > 0 && `${r.updated} updated`,
+      ].filter(Boolean)
+      toast(parts.length === 0 ? 'Up is in sync — nothing new' : `Up sync: ${parts.join(', ')}`, 'success')
     } catch (e) {
       toast((e as Error).message, 'error')
     } finally {

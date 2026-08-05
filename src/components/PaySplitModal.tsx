@@ -167,7 +167,7 @@ export function PaySplitModal({
     if (!draft.depositAccountId) return toast('Choose a deposit account.', 'error')
     setBusy(true)
     try {
-      const n = await executePaySplit({
+      const r = await executePaySplit({
         totalMinor: parseMoney(draft.amount, currency),
         depositAccountId: draft.depositAccountId,
         categoryId: draft.categoryId || undefined,
@@ -184,7 +184,12 @@ export function PaySplitModal({
           allocations,
         })
       }
-      toast(`Pay added and split across ${n - 1} account${n - 1 === 1 ? '' : 's'}`, 'success')
+      toast(
+        r.incomeCreated
+          ? `Pay added and split across ${r.transfers} account${r.transfers === 1 ? '' : 's'}`
+          : `Used the pay already imported from Up — split across ${r.transfers} account${r.transfers === 1 ? '' : 's'}`,
+        'success',
+      )
       onClose()
     } catch (e) {
       toast((e as Error).message, 'error')
