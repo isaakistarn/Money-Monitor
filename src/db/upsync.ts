@@ -1,6 +1,7 @@
 import { db } from './db'
 import { getMeta, setMeta } from './meta'
 import { addAccount, addTransaction, updateAccount, updateTransaction } from './repo'
+import { addDaysISO } from '@/lib/date'
 import {
   fetchUpAccounts,
   fetchUpTransactionsSince,
@@ -66,9 +67,48 @@ export async function disconnectUp(): Promise<void> {
 export interface UpSyncResult {
   added: number
   updated: number
+  /** Hand-entered rows recognised as the same money and claimed by the feed. */
+  matched: number
 }
 
 const externalKey = (upId: string) => `up:${upId}`
+
+/** How many days apart a hand-entered row and the bank's record may be dated
+ *  and still count as the same money movement. */
+export const FEED_MATCH_WINDOW_DAYS = 3
+
+/**
+ * A hand-entered row that records the same real-world movement as an incoming
+ * Up transaction: same type, amount and account(s), dated within a few days,
+ * and not already owned by a feed. Claiming it — instead of inserting a new
+ * row — is what stops a manually-entered pay or purchase from being counted
+ * twice when the bank feed later delivers the same money.
+ */
+async function findManualTwin(
+  plan: Omit<Transaction, 'id' | 'ym' | 'createdAt' | 'updatedAt'>,
+): Promise<Transaction | undefined> {
+  const candidates = await db.transactions
+    .where('date')
+    .between(
+      addDaysISO(plan.date, -FEED_MATCH_WINDOW_DAYS),
+      addDaysISO(plan.date, FEED_MATCH_WINDOW_DAYS),
+      true,
+      true,
+    )
+    .filter(
+      (x) =>
+        !x.externalId &&
+        x.type === plan.type &&
+        x.amountMinor === plan.amountMinor &&
+        (plan.type === 'transfer'
+          ? x.fromAccountId === plan.fromAccountId && x.toAccountId === plan.toAccountId
+          : x.accountId === plan.accountId),
+    )
+    .toArray()
+  const distance = (x: Transaction) => Math.abs(Date.parse(x.date) - Date.parse(plan.date))
+  candidates.sort((a, b) => distance(a) - distance(b))
+  return candidates[0]
+}
 
 /** What an Up transaction should look like locally (account ids are local). */
 function planTransaction(
@@ -77,12 +117,31 @@ function planTransaction(
   categoryFor: (upCategoryId: string | null) => string | undefined,
 ): Omit<Transaction, 'id' | 'ym' | 'createdAt' | 'updatedAt'> | 'skip' | 'mirror' {
   const localAccount = s.accountMap[t.accountId]
-  if (!localAccount) return 'skip'
+  const counterpart = t.transferAccountId ? s.accountMap[t.transferAccountId] : undefined
   const note = [t.description.trim(), t.message?.trim()].filter(Boolean).join(' — ') || undefined
   const date = upTransactionDate(t)
   const base = { date, note, externalId: externalKey(t.id), source: 'up' as const }
 
-  const counterpart = t.transferAccountId ? s.accountMap[t.transferAccountId] : undefined
+  // Round-ups are single-sided in Up's feed: only the saver's inflow row
+  // exists (the spending side is an attribute on the purchase, never its own
+  // transaction), so the transfer materialises from the POSITIVE side — the
+  // mirror rule below would otherwise wait forever for an outflow row.
+  if (isUpRoundUp(t) && t.amountMinor > 0 && counterpart) {
+    if (localAccount) {
+      return {
+        ...base,
+        type: 'transfer',
+        amountMinor: t.amountMinor,
+        fromAccountId: counterpart,
+        toAccountId: localAccount,
+        countsAsSpend: s.roundUpsAsSpend ? true : undefined,
+      }
+    }
+    // Saver not imported: the cents still left the tracked spending account.
+    return { ...base, type: 'expense', amountMinor: t.amountMinor, accountId: counterpart }
+  }
+
+  if (!localAccount) return 'skip'
   if (counterpart) {
     // Movement between two mapped Up accounts: exactly one local transfer.
     // Only the outflow side materialises; the inflow side is its mirror.
@@ -132,7 +191,7 @@ export async function syncUpNow(): Promise<UpSyncResult | null> {
   const categories = await db.categories.toArray()
   const categoryFor = (upId: string | null) => matchUpCategory(upId, categories)
 
-  const result: UpSyncResult = { added: 0, updated: 0 }
+  const result: UpSyncResult = { added: 0, updated: 0, matched: 0 }
   let watermark = s.watermark
 
   for (const t of fetched) {
@@ -144,8 +203,20 @@ export async function syncUpNow(): Promise<UpSyncResult | null> {
 
     const existing = await db.transactions.where('externalId').equals(externalKey(t.id)).first()
     if (!existing) {
-      await addTransaction(plan)
-      result.added++
+      const twin = await findManualTwin(plan)
+      if (twin) {
+        // The user already typed this movement in — claim their row (category
+        // and note stay theirs) rather than double-count the money.
+        await updateTransaction(twin.id, {
+          externalId: plan.externalId,
+          source: plan.source,
+          date: plan.date,
+        })
+        result.matched++
+      } else {
+        await addTransaction(plan)
+        result.added++
+      }
       continue
     }
     // Settlement can shift the amount (e.g. pre-auth holds) and the date.
@@ -235,7 +306,7 @@ export async function completeUpConnect(plan: UpConnectPlan): Promise<UpSyncResu
     importFrom: new Date(Date.now() - plan.historyDays * 24 * 60 * 60 * 1000).toISOString(),
   } satisfies UpSettings)
 
-  const result = (await syncUpNow()) ?? { added: 0, updated: 0 }
+  const result = (await syncUpNow()) ?? { added: 0, updated: 0, matched: 0 }
 
   // Anchor created accounts to the real Up balance.
   for (const c of created) {

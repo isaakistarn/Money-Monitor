@@ -158,7 +158,7 @@ describe('repository rollups', () => {
     const save = await addAccount({ name: 'Savings', type: 'savings', openingBalanceMinor: 0 })
     const bills = await addAccount({ name: 'Bills', type: 'bank', openingBalanceMinor: 0 })
 
-    const n = await executePaySplit({
+    const r = await executePaySplit({
       totalMinor: 1000_00,
       depositAccountId: bank.id,
       date: todayInMonth(),
@@ -167,7 +167,7 @@ describe('repository rollups', () => {
         { toAccountId: bills.id, amountMinor: 200_00 },
       ],
     })
-    expect(n).toBe(3) // 1 income + 2 transfers
+    expect(r).toEqual({ transfers: 2, incomeCreated: true })
 
     expect(await balance(bank.id, 0)).toBe(500_00) // 1000 in − 300 − 200 out
     expect(await balance(save.id, 0)).toBe(300_00)
@@ -177,6 +177,41 @@ describe('repository rollups', () => {
     const stat = await db.monthlyStats.get(currentYm())
     expect(stat?.incomeMinor).toBe(1000_00)
     expect(stat?.expenseMinor ?? 0).toBe(0)
+  })
+
+  it('executePaySplit reuses a pay the Up feed already imported', async () => {
+    const salary = await addCategory({ name: 'Salary', kind: 'income', icon: '💰' })
+    const bank = await addAccount({ name: 'Everyday', type: 'bank', openingBalanceMinor: 0 })
+    const save = await addAccount({ name: 'Savings', type: 'savings', openingBalanceMinor: 0 })
+
+    // The bank feed delivered the deposit first.
+    const imported = await addTransaction({
+      type: 'income',
+      amountMinor: 1000_00,
+      accountId: bank.id,
+      date: todayInMonth(),
+      note: 'EMPLOYER PTY LTD',
+      externalId: 'up:pay',
+      source: 'up',
+    })
+
+    const r = await executePaySplit({
+      totalMinor: 1000_00,
+      depositAccountId: bank.id,
+      categoryId: salary.id,
+      date: todayInMonth(),
+      lines: [{ toAccountId: save.id, amountMinor: 300_00 }],
+    })
+    expect(r).toEqual({ transfers: 1, incomeCreated: false })
+
+    // No second income row — the imported one gained the chosen category.
+    const incomes = (await db.transactions.toArray()).filter((t) => t.type === 'income')
+    expect(incomes).toHaveLength(1)
+    expect(incomes[0]).toMatchObject({ id: imported.id, categoryId: salary.id })
+
+    expect(await balance(bank.id, 0)).toBe(700_00) // 1000 in − 300 out
+    expect(await balance(save.id, 0)).toBe(300_00)
+    expect((await db.monthlyStats.get(currentYm()))?.incomeMinor).toBe(1000_00)
   })
 
   it('holdings: add/update/delete stamp updatedAt and queue for sync', async () => {

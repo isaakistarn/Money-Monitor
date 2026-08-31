@@ -423,24 +423,56 @@ export interface PaySplitExecution {
   lines: Array<{ toAccountId: string; amountMinor: number; note?: string }>
 }
 
+export interface PaySplitResult {
+  /** Transfer rows created (one per allocation line). */
+  transfers: number
+  /** False when the pay was already imported by the Up feed and reused. */
+  incomeCreated: boolean
+}
+
 /**
  * Apply a paycheck split: record the full pay as a single income into the
  * deposit account, then move each allocated portion out via a transfer. Income
  * is counted once (transfers never touch income/expense stats), so monthly
  * income reflects the true pay while balances land in the right accounts.
- * Returns the number of transactions created.
+ *
+ * If the Up feed has already delivered this pay (an imported income on the
+ * deposit account for the same amount, dated within a few days), that row is
+ * reused instead of stacking a second income on top of it — the split then
+ * only performs the transfers.
  */
-export async function executePaySplit(x: PaySplitExecution): Promise<number> {
-  let created = 0
-  await addTransaction({
-    type: 'income',
-    amountMinor: x.totalMinor,
-    accountId: x.depositAccountId,
-    categoryId: x.categoryId,
-    date: x.date,
-    note: x.note,
-  })
-  created++
+export async function executePaySplit(x: PaySplitExecution): Promise<PaySplitResult> {
+  const imported = (
+    await db.transactions
+      .where('date')
+      .between(addDaysISO(x.date, -3), addDaysISO(x.date, 3), true, true)
+      .filter(
+        (t) =>
+          t.source === 'up' &&
+          t.type === 'income' &&
+          t.accountId === x.depositAccountId &&
+          t.amountMinor === x.totalMinor,
+      )
+      .toArray()
+  ).sort((a, b) => Math.abs(Date.parse(a.date) - Date.parse(x.date)) - Math.abs(Date.parse(b.date) - Date.parse(x.date)))[0]
+
+  if (imported) {
+    // Carry the user's chosen income category onto the bank's row.
+    if (x.categoryId && !imported.categoryId) {
+      await updateTransaction(imported.id, { categoryId: x.categoryId })
+    }
+  } else {
+    await addTransaction({
+      type: 'income',
+      amountMinor: x.totalMinor,
+      accountId: x.depositAccountId,
+      categoryId: x.categoryId,
+      date: x.date,
+      note: x.note,
+    })
+  }
+
+  let transfers = 0
   for (const line of x.lines) {
     if (line.amountMinor <= 0 || line.toAccountId === x.depositAccountId) continue
     await addTransaction({
@@ -451,9 +483,9 @@ export async function executePaySplit(x: PaySplitExecution): Promise<number> {
       date: x.date,
       note: line.note,
     })
-    created++
+    transfers++
   }
-  return created
+  return { transfers, incomeCreated: !imported }
 }
 
 /* --------------------------- Holdings ------------------------------- */
