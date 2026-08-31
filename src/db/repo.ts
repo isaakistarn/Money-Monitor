@@ -594,6 +594,20 @@ export async function updateSale(id: string, patch: Partial<NewSale>): Promise<v
   })
 }
 
+/**
+ * Tick a sale off as run through a pay split, or clear the tick again.
+ * Stamps the moment it was ticked; unticking removes the field entirely
+ * (Dexie deletes a property updated to undefined), so the sale returns to
+ * the queue exactly as if it had never been ticked.
+ */
+export async function setSaleSplit(id: string, done: boolean): Promise<void> {
+  const ts = now()
+  await db.transaction('rw', db.sales, db.outbox, async () => {
+    await db.sales.update(id, { splitAt: done ? new Date().toISOString() : undefined, updatedAt: ts })
+    await markChanged('sales', id, ts)
+  })
+}
+
 export async function deleteSale(id: string): Promise<void> {
   const ts = now()
   await db.transaction('rw', db.sales, db.outbox, async () => {

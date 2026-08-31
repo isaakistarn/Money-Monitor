@@ -20,6 +20,7 @@ import {
   addSale,
   updateSale,
   deleteSale,
+  setSaleSplit,
 } from './repo'
 import { currentYm, weekStartISO } from '@/lib/date'
 
@@ -495,5 +496,38 @@ describe('sales', () => {
     await deleteSale(s.id)
     expect(await db.sales.get(s.id)).toBeUndefined()
     expect(await db.outbox.get(`sales:${s.id}`)).toMatchObject({ deleted: true })
+  })
+})
+
+describe('marking a sale as run through a pay split', () => {
+  beforeEach(reset)
+
+  it('stamps when it was ticked, and queues the change for sync', async () => {
+    const s = await addSale({ buyer: 'Ada', amountMinor: 120_00, date: '2026-07-04' })
+    expect(s.splitAt).toBeUndefined()
+    await setSaleSplit(s.id, true)
+    const after = await db.sales.get(s.id)
+    expect(typeof after!.splitAt).toBe('string')
+    expect(Number.isNaN(Date.parse(after!.splitAt!))).toBe(false)
+    expect(await db.outbox.get(`sales:${s.id}`)).toMatchObject({ table: 'sales', deleted: false })
+  })
+
+  it('removes the stamp entirely on untick, so the sale returns to the queue', async () => {
+    const s = await addSale({ buyer: 'Ada', amountMinor: 120_00, date: '2026-07-04' })
+    await setSaleSplit(s.id, true)
+    await setSaleSplit(s.id, false)
+    const after = await db.sales.get(s.id)
+    expect(after!.splitAt).toBeUndefined()
+    expect('splitAt' in after!).toBe(false)
+  })
+
+  it('leaves the sale itself untouched', async () => {
+    const s = await addSale({
+      buyer: 'Ada', amountMinor: 120_00, date: '2026-07-04', referral: 'Sam', referralAmountMinor: 12_00,
+    })
+    await setSaleSplit(s.id, true)
+    expect(await db.sales.get(s.id)).toMatchObject({
+      buyer: 'Ada', amountMinor: 120_00, referral: 'Sam', referralAmountMinor: 12_00, ym: '2026-07',
+    })
   })
 })

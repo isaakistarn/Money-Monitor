@@ -20,6 +20,34 @@ export function netMinorOf(s: Pick<Sale, 'amountMinor' | 'referralAmountMinor'>)
   return s.amountMinor - referralMinorOf(s)
 }
 
+/**
+ * Whether a sale's money has been run through a pay split yet. The Sales page
+ * uses this to drive a work queue, so "not yet" is the meaningful default for
+ * every sale recorded before the tick-off feature existed.
+ */
+export function isSplit(s: Pick<Sale, 'splitAt'>): boolean {
+  return !!s.splitAt
+}
+
+/**
+ * Sales still awaiting a pay split, OLDEST FIRST — it's a queue to work
+ * through, not a feed, so the longest-outstanding sale belongs at the top.
+ * Deliberately not month-scoped: a sale from last month still needs splitting.
+ */
+export function awaitingSplit(rows: Sale[]): Sale[] {
+  return rows
+    .filter((s) => !isSplit(s))
+    .sort((a, b) => a.date.localeCompare(b.date) || a.createdAt.localeCompare(b.createdAt))
+}
+
+/** Most recently ticked off first, so an accidental tick is easy to find and undo. */
+export function recentlySplit(rows: Sale[], limit: number): Sale[] {
+  return rows
+    .filter(isSplit)
+    .sort((a, b) => (b.splitAt ?? '').localeCompare(a.splitAt ?? ''))
+    .slice(0, limit)
+}
+
 export interface SalesTotals {
   count: number
   grossMinor: number

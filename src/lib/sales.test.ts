@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  isSplit,
+  awaitingSplit,
+  recentlySplit,
   netMinorOf,
   referralMinorOf,
   salesTotals,
@@ -118,5 +121,50 @@ describe('breakdowns', () => {
 
   it('falls back to a label rather than dropping a blank buyer', () => {
     expect(salesByBuyer([sale({ amountMinor: 100, buyer: '  ' })])[0].name).toBe('Unnamed')
+  })
+})
+
+describe('pay-split queue', () => {
+  const rows = [
+    sale({ id: 'c', amountMinor: 300, date: '2026-08-20' }),
+    sale({ id: 'a', amountMinor: 100, date: '2026-08-01', splitAt: '2026-08-05T10:00:00.000Z' }),
+    sale({ id: 'b', amountMinor: 200, date: '2026-08-10' }),
+    sale({ id: 'd', amountMinor: 400, date: '2026-08-02', splitAt: '2026-08-30T10:00:00.000Z' }),
+  ]
+
+  it('treats a sale with no splitAt as still awaiting', () => {
+    expect(isSplit(sale({ amountMinor: 1 }))).toBe(false)
+    expect(isSplit(sale({ amountMinor: 1, splitAt: '2026-08-05T10:00:00.000Z' }))).toBe(true)
+  })
+
+  it('queues only unsplit sales, oldest first', () => {
+    expect(awaitingSplit(rows).map((s) => s.id)).toEqual(['b', 'c'])
+  })
+
+  it('breaks a same-day tie by entry order, so the queue is stable', () => {
+    const sameDay = [
+      sale({ id: 'second', amountMinor: 1, date: '2026-08-01', createdAt: '2026-08-01T12:00:00.000Z' }),
+      sale({ id: 'first', amountMinor: 1, date: '2026-08-01', createdAt: '2026-08-01T09:00:00.000Z' }),
+    ]
+    expect(awaitingSplit(sameDay).map((s) => s.id)).toEqual(['first', 'second'])
+  })
+
+  it('lists recently split newest-first so a mistaken tick is easy to undo', () => {
+    expect(recentlySplit(rows, 5).map((s) => s.id)).toEqual(['d', 'a'])
+  })
+
+  it('caps the recently-split list', () => {
+    expect(recentlySplit(rows, 1).map((s) => s.id)).toEqual(['d'])
+  })
+
+  it('totals only what is still awaiting', () => {
+    const t = salesTotals(awaitingSplit(rows))
+    expect(t.count).toBe(2)
+    expect(t.grossMinor).toBe(500) // 200 + 300, excluding the two already split
+  })
+
+  it('nets referral payouts out of the amount still to allocate', () => {
+    const q = awaitingSplit([sale({ amountMinor: 1_000, referral: 'Sam', referralAmountMinor: 150 })])
+    expect(salesTotals(q).netMinor).toBe(850)
   })
 })

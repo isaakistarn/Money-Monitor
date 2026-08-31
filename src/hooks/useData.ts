@@ -5,7 +5,7 @@ import { isLiability, type Account } from '@/types/models'
 import { currentYm, recentYms, recentDays, recentWeekStarts, weekStartISO, addDaysISO } from '@/lib/date'
 import { valueHolding, holdingValueMinor } from '@/lib/portfolio'
 import { incomeByCategory, incomeSeriesByMonth, incomeSlices } from '@/lib/income'
-import { salesByPeriod, salesTotals, type SalesPeriodPoint, type SalesTotals } from '@/lib/sales'
+import { salesByPeriod, salesTotals, awaitingSplit, recentlySplit, type SalesPeriodPoint, type SalesTotals } from '@/lib/sales'
 import type { Sale } from '@/types/models'
 
 /** All accounts with their live derived balance (opening + rollup delta). */
@@ -386,6 +386,35 @@ export function useSalesDailyTrend(days = 30): SalesPeriodPoint[] | undefined {
     const rows = await db.sales.where('date').between(dates[0], dates[dates.length - 1], true, true).toArray()
     return salesByPeriod(rows, dates, (s) => s.date)
   }, [days])
+}
+
+export interface SplitQueue {
+  /** Sales still to run through a pay split, oldest first. */
+  awaiting: Sale[]
+  /** Totals of `awaiting` — what's still to be allocated. */
+  totals: SalesTotals
+  /** The most recently ticked off, so a mistaken tick can be undone. */
+  recent: Sale[]
+  /** How many sales have been ticked off in total. */
+  splitCount: number
+}
+
+/**
+ * The pay-split work queue. Reads the whole table (a personal sales log is
+ * small) so the queue, its totals and the "recently split" list are all
+ * consistent with one another.
+ */
+export function useSalesSplitQueue(recentLimit = 5): SplitQueue | undefined {
+  return useLiveQuery(async () => {
+    const rows = await db.sales.toArray()
+    const awaiting = awaitingSplit(rows)
+    return {
+      awaiting,
+      totals: salesTotals(awaiting),
+      recent: recentlySplit(rows, recentLimit),
+      splitCount: rows.length - awaiting.length,
+    }
+  }, [recentLimit])
 }
 
 /** Distinct buyer and referral names already used, for the entry form's suggestions. */

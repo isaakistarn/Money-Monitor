@@ -206,6 +206,11 @@ export interface Sale extends Synced {
   date: string
   /** Denormalised 'yyyy-mm' bucket for fast monthly queries, in local time. */
   ym: string
+  /** ISO timestamp of when this sale's money was run through a pay split.
+   *  Absent = still awaiting one, which is what the Sales page's queue lists.
+   *  A timestamp rather than a flag so the record says *when* it was handled;
+   *  every consumer only tests truthiness. */
+  splitAt?: string
   note?: string
   createdAt: string
 }
