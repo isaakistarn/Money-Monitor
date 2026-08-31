@@ -8,15 +8,15 @@ import { Modal } from '@/components/ui/Modal'
 import { Field, Input } from '@/components/ui/Field'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { useConfirm } from '@/components/ui/Confirm'
-import { IconPlus, IconTrash, IconChart, IconWallet } from '@/components/ui/icons'
+import { IconPlus, IconTrash, IconChart, IconWallet, IconCheck, IconSwap } from '@/components/ui/icons'
 import { DoughnutChart, MultiBarChart, AreaLineChart } from '@/components/charts'
 import { CHART_PALETTE, INCOME_PALETTE, INCOME_COLOR, EXPENSE_COLOR } from '@/components/charts/chartSetup'
-import { useSales, useSalesOverview, useSalesDailyTrend, useSalesNames } from '@/hooks/useData'
-import { addSale, updateSale, deleteSale } from '@/db/repo'
+import { useSales, useSalesOverview, useSalesDailyTrend, useSalesNames, useSalesSplitQueue } from '@/hooks/useData'
+import { addSale, updateSale, deleteSale, setSaleSplit } from '@/db/repo'
 import { useCurrency } from '@/state/settings'
 import { useUI } from '@/state/ui'
 import { parseMoney, minorToInput, currencySymbol, formatMoney } from '@/lib/money'
-import { salesByBuyer, salesByReferral, referralPayouts, netMinorOf, salesTotals, type SalesSlice } from '@/lib/sales'
+import { salesByBuyer, salesByReferral, referralPayouts, netMinorOf, salesTotals, isSplit, type SalesSlice } from '@/lib/sales'
 import { currentYm, todayISO, ymLabel, dayLabel, relativeDateLabel } from '@/lib/date'
 import type { Sale } from '@/types/models'
 
@@ -81,6 +81,48 @@ function SliceLegend({
   )
 }
 
+/**
+ * One tickable sale in the pay-split queue. The whole row is the label, so the
+ * tap target is the full width rather than just the checkbox.
+ */
+function SplitRow({
+  sale,
+  currency,
+  onToggle,
+}: {
+  sale: Sale
+  currency: string
+  onToggle: (s: Sale) => void
+}) {
+  const done = isSplit(sale)
+  return (
+    <label className="flex items-center gap-3 p-3 rounded-xl border border-border cursor-pointer hover:border-accent/40 transition-colors">
+      <input
+        type="checkbox"
+        checked={done}
+        onChange={() => onToggle(sale)}
+        className="h-4 w-4 accent-accent shrink-0"
+      />
+      <div className="flex-1 min-w-0">
+        <p className={`text-sm font-medium truncate ${done ? 'text-muted line-through' : ''}`}>{sale.buyer}</p>
+        <p className="text-xs text-faint truncate">
+          {relativeDateLabel(sale.date)}
+          {sale.referral && <> · via {sale.referral}</>}
+          {done && sale.splitAt && <> · split {relativeDateLabel(sale.splitAt.slice(0, 10))}</>}
+        </p>
+      </div>
+      <div className="text-right shrink-0">
+        {/* Net, not gross: the referral payout has already left, so this is
+            what actually landed and can be allocated. */}
+        <span className="text-sm font-semibold tabular-nums">{formatMoney(netMinorOf(sale), currency)}</span>
+        {sale.referralAmountMinor ? (
+          <p className="text-[11px] text-faint tabular-nums">of {formatMoney(sale.amountMinor, currency)}</p>
+        ) : null}
+      </div>
+    </label>
+  )
+}
+
 interface Draft {
   id?: string
   buyer: string
@@ -125,7 +167,10 @@ export function Sales() {
   const [dayN, setDayN] = useState(30)
   const [draft, setDraft] = useState<Draft | null>(null)
 
+  const [showSplitDone, setShowSplitDone] = useState(false)
+
   const monthSales = useSales(ym)
+  const queue = useSalesSplitQueue()
   const overview = useSalesOverview(ym, monthsN)
   const daily = useSalesDailyTrend(dayN)
   const names = useSalesNames()
@@ -175,6 +220,12 @@ export function Sales() {
     setYm(draft.date.slice(0, 7))
     setDraft(null)
     toast(draft.id ? 'Sale updated' : 'Sale recorded', 'success')
+  }
+
+  const toggleSplit = async (sale: Sale) => {
+    const done = !isSplit(sale)
+    await setSaleSplit(sale.id, done)
+    toast(done ? `Marked ${sale.buyer} as split` : `Returned ${sale.buyer} to the queue`)
   }
 
   const remove = async () => {
@@ -257,6 +308,65 @@ export function Sales() {
             <p className="text-lg font-bold mt-0.5 tabular-nums">{month.count}</p>
           </div>
         </div>
+      </Card>
+
+      {/* Pay-split queue — sales whose money hasn't been allocated yet */}
+      <Card className="p-5">
+        <SectionHeader
+          title="Awaiting Pay Split"
+          action={
+            queue && queue.awaiting.length > 0 ? (
+              <span className="text-sm font-semibold tabular-nums">
+                {formatMoney(queue.totals.netMinor, currency)}
+                <span className="text-muted font-normal"> to allocate</span>
+              </span>
+            ) : undefined
+          }
+        />
+        {!queue ? null : queue.awaiting.length === 0 ? (
+          <EmptyState
+            icon={<IconCheck width={30} />}
+            title={queue.splitCount > 0 ? 'All caught up' : 'Nothing to split yet'}
+            message={
+              queue.splitCount > 0
+                ? 'Every sale has been run through a pay split.'
+                : 'Record a sale and it appears here until you tick it off as split.'
+            }
+          />
+        ) : (
+          <>
+            <p className="text-xs text-muted mb-3">
+              {queue.awaiting.length} sale{queue.awaiting.length === 1 ? '' : 's'} not yet run through a pay
+              split, oldest first. Ticking one is a note to yourself — it records nothing and moves no money.
+            </p>
+            <div className="space-y-2">
+              {queue.awaiting.map((sale) => (
+                <SplitRow key={sale.id} sale={sale} currency={currency} onToggle={toggleSplit} />
+              ))}
+            </div>
+          </>
+        )}
+
+        {/* Undo path: the most recently ticked, hidden until asked for. */}
+        {queue && queue.recent.length > 0 && (
+          <div className="mt-4 pt-4 border-t border-border">
+            <button
+              onClick={() => setShowSplitDone((v) => !v)}
+              className="text-xs font-medium text-muted hover:text-fg transition-colors inline-flex items-center gap-1.5"
+            >
+              <IconSwap width={14} />
+              {showSplitDone ? 'Hide' : 'Show'} recently split ({queue.splitCount})
+            </button>
+            {showSplitDone && (
+              <div className="space-y-2 mt-3">
+                {queue.recent.map((sale) => (
+                  <SplitRow key={sale.id} sale={sale} currency={currency} onToggle={toggleSplit} />
+                ))}
+                <p className="text-xs text-faint">Untick to send one back to the queue.</p>
+              </div>
+            )}
+          </div>
+        )}
       </Card>
 
       {/* Revenue by month (stacked: net + payouts = gross) */}
@@ -429,7 +539,17 @@ export function Sales() {
                   {s.buyer.trim().charAt(0).toUpperCase() || '?'}
                 </span>
                 <div className="flex-1 min-w-0">
-                  <p className="font-medium text-sm truncate">{s.buyer}</p>
+                  <p className="font-medium text-sm truncate flex items-center gap-1.5">
+                    {s.buyer}
+                    {isSplit(s) && (
+                      <span
+                        className="inline-flex items-center gap-0.5 text-[10px] font-medium text-positive shrink-0"
+                        title="Run through a pay split"
+                      >
+                        <IconCheck width={11} /> SPLIT
+                      </span>
+                    )}
+                  </p>
                   <p className="text-xs text-faint truncate">
                     {relativeDateLabel(s.date)}
                     {s.referral && <> · via {s.referral}</>}
