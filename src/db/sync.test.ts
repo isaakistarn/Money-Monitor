@@ -47,7 +47,7 @@ const server = vi.hoisted(() => {
 vi.mock('@/lib/supabase', () => ({ supabase: server.client, isSupabaseConfigured: true }))
 
 import { db } from './db'
-import { addAccount, addTransaction, deleteTransaction } from './repo'
+import { addAccount, addTransaction, deleteTransaction, addSale, setSaleSplit } from './repo'
 import { syncNow } from './sync'
 import { clearAllData } from './backup'
 
@@ -59,7 +59,7 @@ async function reset() {
     db.accounts.clear(), db.categories.clear(), db.transactions.clear(),
     db.budgets.clear(), db.recurring.clear(), db.meta.clear(),
     db.accountRollup.clear(), db.monthlyStats.clear(), db.categoryMonthly.clear(),
-    db.outbox.clear(),
+    db.sales.clear(), db.outbox.clear(),
   ])
 }
 
@@ -121,5 +121,53 @@ describe('supabase sync engine', () => {
     await syncNow(USER)
     // The pull must NOT clobber the newer local name with the older server one.
     expect((await db.accounts.get(bank.id))?.name).toBe('Renamed')
+  })
+})
+
+/**
+ * Every synced table must round-trip, not just the ones the engine was written
+ * with. A table added to SYNCED_TABLES but left out of the pull transaction's
+ * scope makes Dexie throw mid-pull, which fails the WHOLE pull — so one missing
+ * table silently stops every other table syncing too. That is exactly what
+ * happened when `sales` was added.
+ */
+describe('every synced table round-trips', () => {
+  beforeEach(reset)
+
+  it('pulls a sale onto a fresh device', async () => {
+    const sale = await addSale({ buyer: 'Ada', amountMinor: 250_00, date: '2026-08-31', referral: 'Sam', referralAmountMinor: 25_00 })
+    await syncNow(USER)
+
+    await clearAllData()
+    expect(await db.sales.count()).toBe(0)
+
+    await syncNow(USER)
+    expect(await db.sales.get(sale.id)).toMatchObject({
+      buyer: 'Ada', amountMinor: 250_00, referral: 'Sam', referralAmountMinor: 25_00, ym: '2026-08',
+    })
+  })
+
+  it('does not let one table stop the others syncing', async () => {
+    const bank = await addAccount({ name: 'Bank', type: 'bank', openingBalanceMinor: 0 })
+    await addSale({ buyer: 'Ada', amountMinor: 100_00, date: '2026-08-31' })
+    await addTransaction({ type: 'income', amountMinor: 10_00, accountId: bank.id, date: '2026-08-31' })
+    await syncNow(USER)
+
+    await clearAllData()
+    await syncNow(USER)
+
+    expect(await db.accounts.count()).toBe(1)
+    expect(await db.transactions.count()).toBe(1)
+    expect(await db.sales.count()).toBe(1)
+  })
+
+  it('propagates a pay-split tick to the other device', async () => {
+    const sale = await addSale({ buyer: 'Ada', amountMinor: 100_00, date: '2026-08-31' })
+    await setSaleSplit(sale.id, true)
+    await syncNow(USER)
+
+    await clearAllData()
+    await syncNow(USER)
+    expect(typeof (await db.sales.get(sale.id))!.splitAt).toBe('string')
   })
 })

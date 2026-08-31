@@ -43,6 +43,15 @@ const TABLE_OF = {
 const VALID_TABLES = new Set<string>(SYNCED_TABLES)
 
 /**
+ * Dexie transaction scope for applying a pull — derived from SYNCED_TABLES, not
+ * hand-listed. A table present in TABLE_OF but absent from the scope makes the
+ * `put` throw NotFoundError, which aborts the WHOLE pull, so a single omission
+ * silently stops every table syncing rather than just the new one. Deriving it
+ * means adding a table to SYNCED_TABLES can never leave the scope behind.
+ */
+const PULL_SCOPE = SYNCED_TABLES.map((t) => TABLE_OF[t])
+
+/**
  * A pulled record is applied only if it targets a known table AND its payload's
  * `id` matches the server `row_id`. Without the id check a poisoned record
  * could smuggle a mismatched payload into a legitimate row slot and overwrite
@@ -89,7 +98,7 @@ async function pull(userId: string): Promise<number> {
     const rows = (data ?? []) as RemoteRecord[]
     if (rows.length === 0) break
 
-    await db.transaction('rw', [db.accounts, db.categories, db.transactions, db.budgets, db.recurring, db.paySplits, db.holdings, db.watchlist], async () => {
+    await db.transaction('rw', PULL_SCOPE, async () => {
       for (const rec of rows) {
         if (!isApplicable(rec)) continue
         const table = TABLE_OF[rec.tbl]
