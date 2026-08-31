@@ -37,11 +37,14 @@ interface Draft {
   buyPrice: string
   /** Pull `price` live from Yahoo instead of typing it in. */
   auto: boolean
+  /** True while `name` is one WE filled from a quote, so a later lookup may
+   *  replace it. Cleared the moment the user types a name of their own. */
+  nameAuto: boolean
   note: string
 }
 
 function emptyDraft(): Draft {
-  return { name: '', symbol: '', exchange: '', type: 'stock', quantity: '', price: '', buyPrice: '', auto: true, note: '' }
+  return { name: '', symbol: '', exchange: '', type: 'stock', quantity: '', price: '', buyPrice: '', auto: true, nameAuto: false, note: '' }
 }
 
 /** Status of the live-price lookup behind the auto toggle. */
@@ -142,7 +145,7 @@ export function Portfolio() {
         ? {
             id: h.id, name: h.name, symbol: h.symbol ?? '', exchange: h.exchange ?? '', type: h.type,
             quantity: String(h.quantity), price: minorToInput(h.unitPriceMinor, currency),
-            auto: autoPriceOn(h),
+            auto: autoPriceOn(h), nameAuto: false,
             // Prefer the stored per-unit buy price; fall back to deriving it from
             // a legacy total-invested amount so existing holdings edit cleanly.
             buyPrice:
@@ -181,13 +184,20 @@ export function Portfolio() {
             `${res.quote.name || autoSymbol}` +
             (res.converted ? ` · converted from ${res.quote.currency}` : ''),
         })
-        setDraft((d) =>
+        setDraft((d) => {
           // Re-read the draft rather than closing over it: the user may have
           // edited other fields while the request was in flight.
-          d && d.auto && d.symbol.trim().toUpperCase() === autoSymbol
-            ? { ...d, price: minorToInput(res.priceMinor, currency), name: d.name.trim() || res.quote.name }
-            : d,
-        )
+          if (!d || !d.auto || d.symbol.trim().toUpperCase() !== autoSymbol) return d
+          // Replace the name only when it's blank or still the one we filled in
+          // for a previous ticker — never a name the user typed themselves.
+          const takeName = !d.name.trim() || d.nameAuto
+          return {
+            ...d,
+            price: minorToInput(res.priceMinor, currency),
+            name: takeName ? res.quote.name : d.name,
+            nameAuto: takeName,
+          }
+        })
       } catch (e) {
         if (live) setPriceState({ kind: 'error', message: (e as Error).message })
       }
@@ -361,7 +371,13 @@ export function Portfolio() {
           <div className="space-y-4">
             <div className="grid grid-cols-3 gap-3">
               <Field label="Name" className="col-span-2">
-                <Input autoFocus value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="e.g. Apple" maxLength={40} />
+                <Input
+                  autoFocus
+                  value={draft.name}
+                  onChange={(e) => setDraft({ ...draft, name: e.target.value, nameAuto: false })}
+                  placeholder="e.g. Apple"
+                  maxLength={40}
+                />
               </Field>
               <Field label="Symbol" hint="Used for live prices">
                 <Input value={draft.symbol} onChange={(e) => setDraft({ ...draft, symbol: e.target.value })} placeholder="AAPL" maxLength={12} />

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { afterEach, beforeEach, vi } from 'vitest'
-import { metaToQuote, yahooSymbol, marketOf, cleanSeries, alignSeries, parseSearch, parseNews, parseTrending, fetchYahooQuote, RateLimitError } from './quotes'
+import { metaToQuote, yahooSymbol, marketOf, cleanSeries, alignSeries, parseSearch, parseNews, parseTrending } from './quotes'
 import { FALLBACK_PROXIES } from './proxies'
 
 describe('yahoo chart meta → quote', () => {
@@ -210,46 +210,85 @@ const json = (body: string, status = 200) =>
   new Response(body, { status, headers: { 'content-type': 'application/json' } })
 
 describe('proxy failover', () => {
-  // The throttle sleeps 250ms between proxy attempts; fake timers would need
-  // manual advancing, so instead keep the chains short and let them run.
-  beforeEach(() => vi.unstubAllGlobals())
-  afterEach(() => vi.unstubAllGlobals())
+  // The proxy chain is fixed at module load from VITE_QUOTES_PROXY, so these
+  // tests stub the env and re-import rather than reading whatever the machine
+  // happens to have configured — otherwise a developer with a self-hosted proxy
+  // in .env.local sees a one-entry chain and every failover test fails locally
+  // while CI passes.
+  let quotes: typeof import('./quotes')
+
+  async function loadWith(proxy: string) {
+    vi.stubEnv('VITE_QUOTES_PROXY', proxy)
+    vi.resetModules()
+    quotes = await import('./quotes')
+  }
+
+  beforeEach(() => loadWith('')) // '' is falsy → the public fallback chain
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
+  })
 
   it('skips a proxy that demands an API key (the HTTP 401 that broke prices)', async () => {
     const tried = stubProxies((n) => (n === 0 ? json('{"error":"A valid API key is required."}', 401) : json(chartBody)))
-    const q = await fetchYahooQuote('AAPL')
-    expect(q.price).toBe(100)
+    expect((await quotes.fetchYahooQuote('AAPL')).price).toBe(100)
     expect(tried).toHaveLength(2)
   })
 
   it('skips a proxy whose error envelope arrives with HTTP 200', async () => {
     const tried = stubProxies((n) => (n === 0 ? json('{"error":"A valid API key is required."}') : json(chartBody)))
-    await expect(fetchYahooQuote('AAPL')).resolves.toMatchObject({ price: 100 })
+    await expect(quotes.fetchYahooQuote('AAPL')).resolves.toMatchObject({ price: 100 })
     expect(tried).toHaveLength(2)
   })
 
   it('skips a proxy that returns an HTML error page', async () => {
     const tried = stubProxies((n) => (n === 0 ? new Response('<html>502</html>', { status: 200 }) : json(chartBody)))
-    await expect(fetchYahooQuote('AAPL')).resolves.toMatchObject({ price: 100 })
+    await expect(quotes.fetchYahooQuote('AAPL')).resolves.toMatchObject({ price: 100 })
     expect(tried).toHaveLength(2)
+  })
+
+  it('sticks with the proxy that worked instead of retrying dead ones', async () => {
+    const tried = stubProxies((n) => (n === 0 ? json('{}', 401) : json(chartBody)))
+    await quotes.fetchYahooQuote('AAPL')
+    await quotes.fetchYahooQuote('MSFT')
+    // 2 attempts for the first call, then 1 for the second — not 2 again.
+    expect(tried).toHaveLength(3)
   })
 
   it('reports rate limiting only once every proxy has throttled', async () => {
     const tried = stubProxies(() => json('{}', 429))
-    await expect(fetchYahooQuote('AAPL')).rejects.toBeInstanceOf(RateLimitError)
+    await expect(quotes.fetchYahooQuote('AAPL')).rejects.toBeInstanceOf(quotes.RateLimitError)
     expect(tried).toHaveLength(FALLBACK_PROXIES.length) // every one was given a chance
   })
 
   it('surfaces a plain error when every proxy is down', async () => {
     stubProxies(() => json('{}', 503))
-    const err = await fetchYahooQuote('AAPL').catch((e) => e)
+    const err = await quotes.fetchYahooQuote('AAPL').catch((e) => e)
     expect(err).toBeInstanceOf(Error)
-    expect(err).not.toBeInstanceOf(RateLimitError)
+    expect(err).not.toBeInstanceOf(quotes.RateLimitError)
     expect(String(err.message)).toMatch(/every proxy failed/i)
   })
 
   it("passes Yahoo's own symbol error through instead of blaming the proxy", async () => {
     stubProxies(() => json(JSON.stringify({ chart: { error: { description: 'No data found, symbol may be delisted' } } }), 404))
-    await expect(fetchYahooQuote('NOPE')).rejects.toThrow(/delisted/)
+    await expect(quotes.fetchYahooQuote('NOPE')).rejects.toThrow(/delisted/)
+  })
+
+  it('uses a self-hosted proxy ALONE, never falling back to the public chain', async () => {
+    const SELF = 'https://my-worker.workers.dev/?url='
+    await loadWith(SELF)
+    const urls: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        urls.push(String(url))
+        return json('{}', 500) // always fails, so any fallback would show up
+      }) as unknown as typeof fetch,
+    )
+    await expect(quotes.fetchYahooQuote('AAPL')).rejects.toThrow()
+    expect(urls).toHaveLength(1)
+    expect(urls[0].startsWith(SELF)).toBe(true)
+    // The privacy guarantee: no public proxy is contacted when self-hosting.
+    expect(urls.some((u) => FALLBACK_PROXIES.some((p) => u.startsWith(p)))).toBe(false)
   })
 })
