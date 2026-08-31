@@ -52,7 +52,7 @@ create policy "records are private to owner"
 alter table public.records
   drop constraint if exists records_tbl_allowed,
   add constraint records_tbl_allowed check (tbl in
-    ('accounts','categories','transactions','budgets','recurring','paySplits','holdings','watchlist'));
+    ('accounts','categories','transactions','budgets','recurring','paySplits','holdings','watchlist','sales'));
 
 alter table public.records
   drop constraint if exists records_data_size,

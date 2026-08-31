@@ -5,6 +5,8 @@ import { isLiability, type Account } from '@/types/models'
 import { currentYm, recentYms, recentDays, recentWeekStarts, weekStartISO, addDaysISO } from '@/lib/date'
 import { valueHolding, holdingValueMinor } from '@/lib/portfolio'
 import { incomeByCategory, incomeSeriesByMonth, incomeSlices } from '@/lib/income'
+import { salesByPeriod, salesTotals, type SalesPeriodPoint, type SalesTotals } from '@/lib/sales'
+import type { Sale } from '@/types/models'
 
 /** All accounts with their live derived balance (opening + rollup delta). */
 export function useAccountsWithBalances() {
@@ -330,4 +332,70 @@ export function usePaySplits() {
 
 export function useWatchlist() {
   return useLiveQuery(() => db.watchlist.orderBy('order').toArray(), [])
+}
+
+/* ------------------------------ Sales ------------------------------- */
+
+/** Sales in one month ('yyyy-mm'), newest first. */
+export function useSales(ym = currentYm()): Sale[] | undefined {
+  return useLiveQuery(
+    async () => {
+      const rows = await db.sales.where('ym').equals(ym).toArray()
+      // Newest first, and within a day the most recently entered on top.
+      return rows.sort((a, b) => (a.date === b.date ? b.createdAt.localeCompare(a.createdAt) : b.date.localeCompare(a.date)))
+    },
+    [ym],
+  )
+}
+
+/** Every sale ever recorded, for all-time totals. */
+export function useAllSales(): Sale[] | undefined {
+  return useLiveQuery(() => db.sales.toArray(), [])
+}
+
+export interface SalesOverview {
+  allTime: SalesTotals
+  month: SalesTotals
+  /** Same month last year through to now, oldest first — the monthly chart. */
+  monthly: SalesPeriodPoint[]
+  yms: string[]
+}
+
+/**
+ * Headline sales figures plus a monthly series. Reads the whole table: a
+ * personal sales log is small (hundreds of rows), and doing it in one query
+ * keeps the all-time totals and the chart consistent with each other.
+ */
+export function useSalesOverview(ym = currentYm(), months = 12): SalesOverview | undefined {
+  return useLiveQuery(async () => {
+    const rows = await db.sales.toArray()
+    const yms = recentYms(months)
+    return {
+      allTime: salesTotals(rows),
+      month: salesTotals(rows.filter((s) => s.ym === ym)),
+      monthly: salesByPeriod(rows, yms, (s) => s.ym),
+      yms,
+    }
+  }, [ym, months])
+}
+
+/** Sales bucketed by day over the last N days, oldest first. */
+export function useSalesDailyTrend(days = 30): SalesPeriodPoint[] | undefined {
+  return useLiveQuery(async () => {
+    const dates = recentDays(days)
+    const rows = await db.sales.where('date').between(dates[0], dates[dates.length - 1], true, true).toArray()
+    return salesByPeriod(rows, dates, (s) => s.date)
+  }, [days])
+}
+
+/** Distinct buyer and referral names already used, for the entry form's suggestions. */
+export function useSalesNames(): { buyers: string[]; referrals: string[] } | undefined {
+  return useLiveQuery(async () => {
+    const rows = await db.sales.toArray()
+    const sorted = (set: Set<string>) => [...set].sort((a, b) => a.localeCompare(b))
+    return {
+      buyers: sorted(new Set(rows.map((s) => s.buyer.trim()).filter(Boolean))),
+      referrals: sorted(new Set(rows.map((s) => s.referral?.trim() ?? '').filter(Boolean))),
+    }
+  }, [])
 }

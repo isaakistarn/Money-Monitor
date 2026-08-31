@@ -4,7 +4,7 @@ import { setMeta } from './meta'
 import { now, markChanged } from './changes'
 import { encryptBackupJson, decryptBackupJson, isEncryptedBackup } from './cryptobackup'
 import { todayISO } from '@/lib/date'
-import { SYNCED_TABLES, type Account, type Budget, type Category, type Holding, type PaySplit, type Recurring, type Transaction, type WatchItem } from '@/types/models'
+import { SYNCED_TABLES, type Account, type Budget, type Category, type Holding, type PaySplit, type Recurring, type Sale, type Transaction, type WatchItem } from '@/types/models'
 
 export interface BackupFile {
   app: 'finance-tracker'
@@ -19,12 +19,13 @@ export interface BackupFile {
     paySplits?: PaySplit[]
     holdings?: Holding[]
     watchlist?: WatchItem[]
+    sales?: Sale[]
     meta: Array<{ key: string; value: unknown }>
   }
 }
 
 export async function buildBackup(): Promise<BackupFile> {
-  const [accounts, categories, transactions, budgets, recurring, paySplits, holdings, watchlist, meta] = await Promise.all([
+  const [accounts, categories, transactions, budgets, recurring, paySplits, holdings, watchlist, sales, meta] = await Promise.all([
     db.accounts.toArray(),
     db.categories.toArray(),
     db.transactions.toArray(),
@@ -33,13 +34,14 @@ export async function buildBackup(): Promise<BackupFile> {
     db.paySplits.toArray(),
     db.holdings.toArray(),
     db.watchlist.toArray(),
+    db.sales.toArray(),
     db.meta.toArray(),
   ])
   return {
     app: 'finance-tracker',
     version: 1,
     exportedAt: new Date().toISOString(),
-    data: { accounts, categories, transactions, budgets, recurring, paySplits, holdings, watchlist, meta },
+    data: { accounts, categories, transactions, budgets, recurring, paySplits, holdings, watchlist, sales, meta },
   }
 }
 
@@ -59,6 +61,7 @@ const REQUIRED_NUMBERS: Partial<Record<string, string[]>> = {
   budgets: ['amountMinor'],
   recurring: ['amountMinor'],
   holdings: ['quantity', 'unitPriceMinor'],
+  sales: ['amountMinor'],
 }
 
 /**
@@ -181,15 +184,16 @@ export async function importBackup(text: string, passphrase?: string): Promise<{
   const paySplits = stamp(clean<PaySplit>(data.paySplits, 'paySplits'))
   const holdings = stamp(clean<Holding>(data.holdings, 'holdings'))
   const watchlist = stamp(clean<WatchItem>(data.watchlist, 'watchlist'))
+  const sales = stamp(clean<Sale>(data.sales, 'sales'))
 
   await db.transaction(
     'rw',
-    [db.accounts, db.categories, db.transactions, db.budgets, db.recurring, db.paySplits, db.holdings, db.watchlist, db.meta,
+    [db.accounts, db.categories, db.transactions, db.budgets, db.recurring, db.paySplits, db.holdings, db.watchlist, db.sales, db.meta,
      db.accountRollup, db.monthlyStats, db.categoryMonthly, db.outbox],
     async () => {
       await Promise.all([
         db.accounts.clear(), db.categories.clear(), db.transactions.clear(),
-        db.budgets.clear(), db.recurring.clear(), db.paySplits.clear(), db.holdings.clear(), db.watchlist.clear(), db.meta.clear(), db.outbox.clear(),
+        db.budgets.clear(), db.recurring.clear(), db.paySplits.clear(), db.holdings.clear(), db.watchlist.clear(), db.sales.clear(), db.meta.clear(), db.outbox.clear(),
       ])
       await db.accounts.bulkAdd(accounts)
       await db.categories.bulkAdd(categories)
@@ -199,10 +203,11 @@ export async function importBackup(text: string, passphrase?: string): Promise<{
       await db.paySplits.bulkAdd(paySplits)
       await db.holdings.bulkAdd(holdings)
       await db.watchlist.bulkAdd(watchlist)
+      await db.sales.bulkAdd(sales)
       await db.meta.bulkPut((Array.isArray(data.meta) ? data.meta : []).filter(
         (m) => !!m && typeof m === 'object' && typeof m.key === 'string' && m.key.length > 0,
       ))
-      const tables = { accounts, categories, transactions, budgets, recurring, paySplits, holdings, watchlist }
+      const tables = { accounts, categories, transactions, budgets, recurring, paySplits, holdings, watchlist, sales }
       for (const name of SYNCED_TABLES) {
         for (const row of tables[name]) await markChanged(name, row.id, ts)
       }
@@ -216,12 +221,12 @@ export async function importBackup(text: string, passphrase?: string): Promise<{
 export async function clearAllData(): Promise<void> {
   await db.transaction(
     'rw',
-    [db.accounts, db.categories, db.transactions, db.budgets, db.recurring, db.paySplits, db.holdings, db.watchlist, db.meta,
+    [db.accounts, db.categories, db.transactions, db.budgets, db.recurring, db.paySplits, db.holdings, db.watchlist, db.sales, db.meta,
      db.accountRollup, db.monthlyStats, db.categoryMonthly, db.outbox],
     async () => {
       await Promise.all([
         db.accounts.clear(), db.categories.clear(), db.transactions.clear(),
-        db.budgets.clear(), db.recurring.clear(), db.paySplits.clear(), db.holdings.clear(), db.watchlist.clear(), db.meta.clear(),
+        db.budgets.clear(), db.recurring.clear(), db.paySplits.clear(), db.holdings.clear(), db.watchlist.clear(), db.sales.clear(), db.meta.clear(),
         db.accountRollup.clear(), db.monthlyStats.clear(), db.categoryMonthly.clear(),
         db.outbox.clear(),
       ])

@@ -1,5 +1,5 @@
 import { db } from './db'
-import type { Account, Budget, Category, CategoryKind, Holding, PaySplit, Recurring, Transaction, WatchItem } from '@/types/models'
+import type { Account, Budget, Category, CategoryKind, Holding, PaySplit, Recurring, Sale, Transaction, WatchItem } from '@/types/models'
 import { ymOf, addDaysISO, addMonthsISO } from '@/lib/date'
 import { uid } from '@/lib/cn'
 import { now, markChanged, markDeleted } from './changes'
@@ -543,6 +543,62 @@ export async function deleteWatchItem(id: string): Promise<void> {
   await db.transaction('rw', db.watchlist, db.outbox, async () => {
     await db.watchlist.delete(id)
     await markDeleted('watchlist', id, ts)
+  })
+}
+
+/* ----------------------------- Sales -------------------------------- */
+
+/** Fields a caller supplies; `ym` is derived from the date so it can't drift. */
+export type NewSale = Omit<Sale, 'id' | 'ym' | 'createdAt' | 'updatedAt'> & Partial<Pick<Sale, 'id'>>
+
+/** Blank referral text means "direct sale" — normalise it away on write, so
+ *  reporting never has to distinguish undefined from '' or '   '. */
+function normalizeSale<T extends { referral?: string; referralAmountMinor?: number; buyer?: string }>(input: T): T {
+  const referral = input.referral?.trim() || undefined
+  return {
+    ...input,
+    ...(input.buyer !== undefined ? { buyer: input.buyer.trim() } : {}),
+    referral,
+    // A payout with nobody to pay is meaningless, so it goes with the referrer.
+    referralAmountMinor: referral ? input.referralAmountMinor : undefined,
+  }
+}
+
+export async function addSale(input: NewSale): Promise<Sale> {
+  const ts = now()
+  const sale: Sale = {
+    ...normalizeSale(input),
+    id: input.id ?? uid(),
+    ym: ymOf(input.date),
+    createdAt: new Date().toISOString(),
+    updatedAt: ts,
+  }
+  await db.transaction('rw', db.sales, db.outbox, async () => {
+    await db.sales.add(sale)
+    await markChanged('sales', sale.id, ts)
+  })
+  return sale
+}
+
+export async function updateSale(id: string, patch: Partial<NewSale>): Promise<void> {
+  const ts = now()
+  const next = {
+    ...normalizeSale(patch),
+    // Keep the month bucket in step whenever the date moves.
+    ...(patch.date ? { ym: ymOf(patch.date) } : {}),
+    updatedAt: ts,
+  }
+  await db.transaction('rw', db.sales, db.outbox, async () => {
+    await db.sales.update(id, next)
+    await markChanged('sales', id, ts)
+  })
+}
+
+export async function deleteSale(id: string): Promise<void> {
+  const ts = now()
+  await db.transaction('rw', db.sales, db.outbox, async () => {
+    await db.sales.delete(id)
+    await markDeleted('sales', id, ts)
   })
 }
 

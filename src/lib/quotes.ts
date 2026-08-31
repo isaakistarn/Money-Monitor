@@ -3,19 +3,35 @@
  * send CORS headers). Keyless and free, covering US, ASX, and other markets
  * plus crypto and FX. A light throttle keeps us polite to the proxy.
  *
+ * RESILIENCE: public CORS proxies are unreliable — they rate-limit, go down,
+ * or (as corsproxy.io did) start demanding an API key and answer HTTP 401 to
+ * everyone. So requests walk a FAILOVER CHAIN of proxies (see proxies.ts),
+ * skipping any that refuses, is throttling, or returns something that isn't
+ * Yahoo JSON, and sticking with the first that works for the rest of the
+ * session. An error only surfaces once every proxy has been tried.
+ *
  * SECURITY: prefer a SELF-HOSTED proxy via VITE_QUOTES_PROXY (see
- * proxy/cloudflare-worker.js + DEPLOY.md). The public corsproxy.io fallback is
- * an *open* proxy: it sees every ticker you follow, could rewrite prices, and
- * — because it must be allow-listed in the CSP — gives injected code an
- * exfiltration route. The build swaps the CSP entry automatically when
- * VITE_QUOTES_PROXY is set (vite.config.ts).
+ * proxy/cloudflare-worker.js + DEPLOY.md). When it is set it is used ALONE —
+ * the public chain is not consulted at all, because those are *open* proxies:
+ * they see every ticker you follow, could rewrite prices, and — because they
+ * must be allow-listed in the CSP — give injected code an exfiltration route.
+ * The build narrows the CSP to your worker's origin automatically
+ * (vite.config.ts).
  *
  * Symbols use Yahoo conventions: US `AAPL`, ASX `CBA.AX`, crypto `BTC-USD`,
  * FX `USDAUD=X`. The yahooSymbol() helper builds these from a plain
  * symbol + exchange.
  */
 
-const PROXY = import.meta.env.VITE_QUOTES_PROXY || 'https://corsproxy.io/?url='
+import { FALLBACK_PROXIES } from './proxies'
+
+/**
+ * A self-hosted proxy replaces the public chain outright (privacy: no third
+ * party should see your tickers); otherwise we fail over across the public ones.
+ */
+const SELF_HOSTED = import.meta.env.VITE_QUOTES_PROXY
+const PROXIES: readonly string[] = SELF_HOSTED ? [SELF_HOSTED] : FALLBACK_PROXIES
+
 const CHART = 'https://query1.finance.yahoo.com/v8/finance/chart/'
 const SEARCH = 'https://query1.finance.yahoo.com/v1/finance/search'
 const TRENDING = 'https://query1.finance.yahoo.com/v1/finance/trending/'
@@ -97,6 +113,104 @@ async function throttle(): Promise<void> {
   lastReq = Date.now()
 }
 
+/**
+ * Statuses that say "this PROXY can't serve you right now" rather than
+ * "Yahoo answered". 401/402/403 is a proxy demanding an API key (corsproxy.io's
+ * failure mode), 429 is throttling, 5xx is the proxy or its upstream hop being
+ * down. All of them mean: try the next proxy in the chain.
+ */
+const PROXY_TROUBLE = (status: number) =>
+  status === 401 || status === 402 || status === 403 || status === 407 || status === 429 || status >= 500
+
+/**
+ * A proxy's own error envelope, e.g. `{"error":"A valid API key is required"}`
+ * served with HTTP 200. Yahoo never puts a *string* at the top-level `error`
+ * key — its errors live at `chart.error` — so this only catches proxies.
+ */
+function isProxyEnvelope(json: unknown): boolean {
+  return typeof (json as { error?: unknown })?.error === 'string'
+}
+
+/**
+ * Index of the proxy that last worked. Sticky for the session so a healthy
+ * proxy isn't re-discovered on every request, and so we don't hammer dead ones.
+ */
+let activeProxy = 0
+
+/**
+ * Per-attempt budget. Without it a proxy that accepts the connection and then
+ * hangs (a common failure for these free services) would stall the whole chain
+ * for the browser's default timeout — the user watches a spinner for a minute
+ * instead of failing over in seconds.
+ */
+const ATTEMPT_TIMEOUT_MS = 8_000
+
+/** The proxy currently in use — surfaced in error messages and diagnostics. */
+export function activeProxyOrigin(): string {
+  return new URL(PROXIES[activeProxy] ?? PROXIES[0]).origin
+}
+
+/**
+ * GET `target` through the proxy chain and parse the JSON.
+ *
+ * Walks every proxy starting from the last known-good one, skipping any that
+ * refuses, throttles, or hands back something that isn't a JSON object. Only
+ * when the whole chain has been exhausted does it throw — as a RateLimitError
+ * if throttling was the reason, so callers can back off rather than retry.
+ * `service` names the feature for the user-facing message ("Price service").
+ */
+async function proxyJson(target: string, service: string): Promise<unknown> {
+  let rateLimited = false
+  let lastStatus = 0
+
+  for (let i = 0; i < PROXIES.length; i++) {
+    const idx = (activeProxy + i) % PROXIES.length
+    await throttle()
+    let res: Response
+    try {
+      res = await fetch(PROXIES[idx] + encodeURIComponent(target), {
+        headers: { accept: 'application/json' },
+        signal: AbortSignal.timeout(ATTEMPT_TIMEOUT_MS),
+      })
+    } catch {
+      // Network error, blocked by CORS/CSP, or our own timeout. None of these
+      // distinguish themselves to script, so all mean: try the next proxy.
+      continue
+    }
+    if (PROXY_TROUBLE(res.status)) {
+      if (res.status === 429) rateLimited = true
+      lastStatus = res.status
+      continue
+    }
+    // Other non-OK statuses (400/404) are usually Yahoo's own answer and carry
+    // a useful JSON body, so they fall through to parsing.
+    let json: unknown
+    try {
+      json = await res.json()
+    } catch {
+      lastStatus = res.status // proxy returned HTML (an interstitial or error page)
+      continue
+    }
+    if (!json || typeof json !== 'object' || isProxyEnvelope(json)) {
+      lastStatus = res.status
+      continue
+    }
+    activeProxy = idx // stick with whatever answered
+    return json
+  }
+
+  // Every proxy is exhausted. When they're all public ones this is routine —
+  // they share free quotas — so the message points at the durable fix rather
+  // than just telling the user to try again.
+  const hint = SELF_HOSTED ? '' : ' Set up your own quote proxy for reliable prices (see DEPLOY.md).'
+  if (rateLimited) throw new RateLimitError(`${service} is rate limited right now.${hint}`)
+  throw new Error(
+    (lastStatus
+      ? `Could not reach ${service.toLowerCase()} — every proxy failed (last: HTTP ${lastStatus}).`
+      : `Could not reach ${service.toLowerCase()} (proxy, network, or CORS).`) + hint,
+  )
+}
+
 type YMeta = Record<string, unknown>
 
 /** Positive finite number from Yahoo meta, else undefined (fields come and go per asset class). */
@@ -174,17 +288,8 @@ interface ChartData {
 }
 
 async function yahooChart(yahoo: string, range = '1d', interval = '1d'): Promise<ChartData> {
-  await throttle()
   const target = `${CHART}${encodeURIComponent(yahoo)}?interval=${interval}&range=${range}`
-  let res: Response
-  try {
-    res = await fetch(`${PROXY}${encodeURIComponent(target)}`)
-  } catch {
-    throw new Error('Could not reach the price service (proxy or network).')
-  }
-  if (res.status === 429) throw new RateLimitError('Price service is busy (rate limited). Try again shortly.')
-  if (!res.ok) throw new Error(`Price service error (HTTP ${res.status}).`)
-  const j = (await res.json()) as {
+  const j = (await proxyJson(target, 'Price service')) as {
     chart?: {
       result?: Array<{ meta?: YMeta; timestamp?: number[]; indicators?: { quote?: Array<{ close?: Array<number | null> }> } }>
       error?: { description?: string }
@@ -255,17 +360,8 @@ export function parseSearch(j: SearchJson): SymbolMatch[] {
 export async function searchSymbols(query: string): Promise<SymbolMatch[]> {
   const q = query.trim()
   if (q.length < 2) return []
-  await throttle()
   const target = `${SEARCH}?q=${encodeURIComponent(q)}&quotesCount=10&newsCount=0&listsCount=0`
-  let res: Response
-  try {
-    res = await fetch(`${PROXY}${encodeURIComponent(target)}`)
-  } catch {
-    throw new Error('Could not reach the search service.')
-  }
-  if (res.status === 429) throw new RateLimitError('Search is busy. Try again shortly.')
-  if (!res.ok) throw new Error(`Search error (HTTP ${res.status}).`)
-  return parseSearch((await res.json()) as SearchJson)
+  return parseSearch((await proxyJson(target, 'Search service')) as SearchJson)
 }
 
 /* ------------------------------- News ------------------------------- */
@@ -319,17 +415,8 @@ export function parseNews(j: NewsJson): NewsItem[] {
 
 /** Latest news for a query — a ticker ("CBA.AX") or a topic ("stock market"). */
 export async function fetchNews(query: string, count = 8): Promise<NewsItem[]> {
-  await throttle()
   const target = `${SEARCH}?q=${encodeURIComponent(query)}&quotesCount=0&newsCount=${count}&listsCount=0`
-  let res: Response
-  try {
-    res = await fetch(`${PROXY}${encodeURIComponent(target)}`)
-  } catch {
-    throw new Error('Could not reach the news service.')
-  }
-  if (res.status === 429) throw new RateLimitError('News service is busy. Try again shortly.')
-  if (!res.ok) throw new Error(`News error (HTTP ${res.status}).`)
-  return parseNews((await res.json()) as NewsJson)
+  return parseNews((await proxyJson(target, 'News service')) as NewsJson)
 }
 
 /* ----------------------------- Trending ----------------------------- */
@@ -347,15 +434,6 @@ export function parseTrending(j: TrendingJson): string[] {
 
 /** Trending Yahoo symbols for a region (e.g. 'US', 'AU'). */
 export async function fetchTrending(region: string, count = 6): Promise<string[]> {
-  await throttle()
   const target = `${TRENDING}${encodeURIComponent(region.toUpperCase())}?count=${count}`
-  let res: Response
-  try {
-    res = await fetch(`${PROXY}${encodeURIComponent(target)}`)
-  } catch {
-    throw new Error('Could not reach the trending service.')
-  }
-  if (res.status === 429) throw new RateLimitError('Trending service is busy. Try again shortly.')
-  if (!res.ok) throw new Error(`Trending error (HTTP ${res.status}).`)
-  return parseTrending((await res.json()) as TrendingJson).slice(0, count)
+  return parseTrending((await proxyJson(target, 'Trending service')) as TrendingJson).slice(0, count)
 }

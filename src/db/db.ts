@@ -8,6 +8,7 @@ import type {
   PaySplit,
   Holding,
   WatchItem,
+  Sale,
   AccountRollup,
   MonthlyStat,
   CategoryMonthly,
@@ -30,6 +31,7 @@ export class FinanceDB extends Dexie {
   paySplits!: Table<PaySplit, string>
   holdings!: Table<Holding, string>
   watchlist!: Table<WatchItem, string>
+  sales!: Table<Sale, string>
   portfolioSnapshots!: Table<PortfolioSnapshot, string>
 
   constructor() {
@@ -98,6 +100,13 @@ export class FinanceDB extends Dexie {
     this.version(7).stores({
       transactions:
         'id, date, ym, type, categoryId, accountId, fromAccountId, toAccountId, updatedAt, externalId, [ym+type], [accountId+date]',
+    })
+
+    // v8 adds product sales (buyer, amount, referral) — synced like other
+    // entities. Indexed on `ym` for the monthly reports and on `date` for the
+    // range queries behind the daily/rolling charts.
+    this.version(8).stores({
+      sales: 'id, date, ym, buyer, referral, updatedAt',
     })
   }
 }

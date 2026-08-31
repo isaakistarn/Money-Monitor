@@ -1,5 +1,17 @@
 import type { Holding } from '@/types/models'
 
+/**
+ * Whether a holding's price is tracked live from Yahoo.
+ *
+ * Absent `autoPrice` means "on if there's a symbol": holdings created before
+ * the toggle existed were refreshed purely on having a symbol, so this keeps
+ * them behaving exactly as they did. Turning it off pins the manual price and
+ * excludes the holding from every refresh.
+ */
+export function autoPriceOn(h: Pick<Holding, 'symbol' | 'autoPrice'>): boolean {
+  return !!h.symbol?.trim() && (h.autoPrice ?? true)
+}
+
 /** Current value of a holding in minor units: quantity × unit price, rounded. */
 export function holdingValueMinor(quantity: number, unitPriceMinor: number): number {
   return Math.round((Number(quantity) || 0) * (unitPriceMinor || 0))

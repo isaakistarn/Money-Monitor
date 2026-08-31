@@ -17,6 +17,9 @@ import {
   deleteCategory,
   categoryUsage,
   rebuildRollups,
+  addSale,
+  updateSale,
+  deleteSale,
 } from './repo'
 import { currentYm, weekStartISO } from '@/lib/date'
 
@@ -30,7 +33,7 @@ async function reset() {
     db.accounts.clear(), db.categories.clear(), db.transactions.clear(),
     db.budgets.clear(), db.recurring.clear(), db.meta.clear(),
     db.accountRollup.clear(), db.monthlyStats.clear(), db.categoryMonthly.clear(),
-    db.paySplits.clear(), db.holdings.clear(), db.outbox.clear(),
+    db.paySplits.clear(), db.holdings.clear(), db.sales.clear(), db.outbox.clear(),
   ])
 }
 
@@ -450,3 +453,47 @@ describe('repository rollups', () => {
 function todayInMonth() {
   return new Date().toISOString().slice(0, 10)
 }
+
+describe('sales', () => {
+  beforeEach(reset)
+
+  it('derives the month bucket from the date and queues the row for sync', async () => {
+    const s = await addSale({ buyer: 'Ada', amountMinor: 120_00, date: '2026-07-04' })
+    expect(s.ym).toBe('2026-07')
+    expect(await db.outbox.get(`sales:${s.id}`)).toMatchObject({ table: 'sales', deleted: false })
+  })
+
+  it('normalises a blank referral away, payout included', async () => {
+    const s = await addSale({
+      buyer: '  Ada  ',
+      amountMinor: 120_00,
+      date: '2026-07-04',
+      referral: '   ',
+      referralAmountMinor: 10_00,
+    })
+    expect(s.buyer).toBe('Ada')
+    expect(s.referral).toBeUndefined()
+    // A payout with nobody to pay would skew every referral total.
+    expect(s.referralAmountMinor).toBeUndefined()
+  })
+
+  it('keeps ym in step when the date is edited', async () => {
+    const s = await addSale({ buyer: 'Ada', amountMinor: 120_00, date: '2026-07-04' })
+    await updateSale(s.id, { date: '2026-09-30' })
+    const after = await db.sales.get(s.id)
+    expect(after).toMatchObject({ date: '2026-09-30', ym: '2026-09' })
+  })
+
+  it('leaves ym alone when the date is untouched', async () => {
+    const s = await addSale({ buyer: 'Ada', amountMinor: 120_00, date: '2026-07-04' })
+    await updateSale(s.id, { amountMinor: 150_00 })
+    expect(await db.sales.get(s.id)).toMatchObject({ amountMinor: 150_00, ym: '2026-07' })
+  })
+
+  it('leaves a tombstone on delete so other devices drop the row too', async () => {
+    const s = await addSale({ buyer: 'Ada', amountMinor: 120_00, date: '2026-07-04' })
+    await deleteSale(s.id)
+    expect(await db.sales.get(s.id)).toBeUndefined()
+    expect(await db.outbox.get(`sales:${s.id}`)).toMatchObject({ deleted: true })
+  })
+})
