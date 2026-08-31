@@ -133,10 +133,12 @@ export interface PaySplit extends Synced {
 }
 
 /**
- * An investment holding (stock, fund, crypto, commodity, …). The app is
- * local-first with no price feed, so `unitPriceMinor` is updated manually by
- * the user. Current value = quantity × unitPrice; it counts toward Net Worth
- * and Total Assets but NOT Spendable Cash (it isn't liquid).
+ * An investment holding (stock, fund, crypto, commodity, …). Current value =
+ * quantity × unitPrice; it counts toward Net Worth and Total Assets but NOT
+ * Spendable Cash (it isn't liquid).
+ *
+ * `unitPriceMinor` is either pulled from Yahoo Finance (when `autoPrice` is on
+ * and a `symbol` is set) or typed in by hand — see `autoPriceOn()`.
  */
 export type HoldingType = 'stock' | 'etf' | 'crypto' | 'commodity' | 'cash' | 'other'
 
@@ -152,6 +154,10 @@ export interface Holding extends Synced {
   quantity: number
   /** Current price per unit, in minor units. */
   unitPriceMinor: number
+  /** Track the price live from Yahoo Finance instead of typing it in. Absent =
+   *  "on if a symbol is set", which is how holdings behaved before the toggle
+   *  existed, so legacy rows keep auto-refreshing. See `autoPriceOn()`. */
+  autoPrice?: boolean
   /** Total amount invested (minor units), for gain/loss. Optional. Legacy
    *  holdings may carry only this; when `avgCostMinor` is set it is kept in sync
    *  as quantity × avgCostMinor. */
@@ -175,6 +181,33 @@ export interface PortfolioSnapshot {
   date: string
   valueMinor: number
   costMinor: number
+}
+
+/**
+ * A product sale: who bought, for how much, and what (if anything) was paid
+ * out to whoever referred them.
+ *
+ * Sales are tracked SEPARATELY from transactions — recording one does not move
+ * money between accounts or touch Net Worth, because the cash usually shows up
+ * as a bank transaction of its own and counting both would double it. The Sales
+ * page reports on this table alone.
+ */
+export interface Sale extends Synced {
+  id: string
+  /** Who bought. Free text — the reporting groups by the exact name. */
+  buyer: string
+  /** Sale price in minor units (always positive). */
+  amountMinor: number
+  /** Who referred the buyer. Absent = a direct sale. */
+  referral?: string
+  /** Paid out to the referrer, in minor units. Absent = nothing paid. */
+  referralAmountMinor?: number
+  /** ISO date (yyyy-mm-dd) in the user's local timezone. */
+  date: string
+  /** Denormalised 'yyyy-mm' bucket for fast monthly queries, in local time. */
+  ym: string
+  note?: string
+  createdAt: string
 }
 
 /** A ticker the user follows on the Watchlist (live data is fetched, not stored). */
@@ -227,6 +260,7 @@ export const SYNCED_TABLES = [
   'paySplits',
   'holdings',
   'watchlist',
+  'sales',
 ] as const
 export type SyncedTable = (typeof SYNCED_TABLES)[number]
 

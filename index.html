@@ -9,12 +9,15 @@
       auth token (kept in localStorage) to an attacker-controlled host.
       connect-src is the allow-list of everywhere the app is permitted to talk to:
         · *.supabase.co  — cross-device sync + auth (REST + realtime websocket)
-        · corsproxy.io   — the keyless price/search proxy (Yahoo is only reached
-                           through it, never directly). This is the fallback:
-                           when VITE_QUOTES_PROXY is set, the build replaces it
-                           here with your self-hosted worker's origin — strongly
-                           recommended, since an OPEN proxy in connect-src is an
-                           exfiltration route (see SECURITY.md).
+        · __QUOTE_PROXIES__ — placeholder the build fills in with the keyless
+                           CORS proxies used to reach Yahoo (never contacted
+                           directly). Several are listed because free proxies
+                           die without notice and the app fails over between
+                           them (src/lib/proxies.ts). When VITE_QUOTES_PROXY is
+                           set the build collapses this to your self-hosted
+                           worker's origin alone — strongly recommended, since
+                           an OPEN proxy in connect-src is an exfiltration
+                           route (see SECURITY.md).
         · api.up.com.au  — Up Bank transaction feed (Up serves CORS, so it is
                            reached directly; the personal token is only ever
                            sent to this origin).
@@ -27,7 +30,7 @@
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://financialmodelingprep.com https://s.yimg.com; font-src 'self' data:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://corsproxy.io https://api.up.com.au; worker-src 'self'; manifest-src 'self'"
+      content="default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://financialmodelingprep.com https://s.yimg.com; font-src 'self' data:; connect-src 'self' https://*.supabase.co wss://*.supabase.co __QUOTE_PROXIES__ https://api.up.com.au; worker-src 'self'; manifest-src 'self'"
     />
     <meta name="referrer" content="strict-origin-when-cross-origin" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />

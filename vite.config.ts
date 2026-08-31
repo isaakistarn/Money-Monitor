@@ -2,6 +2,7 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import { fileURLToPath, URL } from 'node:url'
+import { FALLBACK_PROXIES, proxyOrigins } from './src/lib/proxies'
 
 // `base` controls the public path the app is served from.
 // - Local dev / custom domain / user-site (username.github.io): leave as '/'.
@@ -9,18 +10,22 @@ import { fileURLToPath, URL } from 'node:url'
 // The CI workflow sets VITE_BASE automatically from the repository name.
 const base = process.env.VITE_BASE || '/'
 
+// Fill the CSP's `__QUOTE_PROXIES__` placeholder with the origins the quote
+// layer may actually contact, derived from the same list the app fails over
+// through (src/lib/proxies.ts) so the two can never drift apart.
+//
 // When a self-hosted quote proxy is configured (VITE_QUOTES_PROXY, see
-// proxy/cloudflare-worker.js), swap the public corsproxy.io fallback out of the
-// CSP connect-src at build time. This is what closes the CSP's exfiltration
-// hole: your worker only forwards to Yahoo, while corsproxy.io forwards
-// anywhere — allow-listing an open proxy defeats the point of connect-src.
+// proxy/cloudflare-worker.js) it collapses to that origin alone. This is what
+// closes the CSP's exfiltration hole: your worker only forwards to Yahoo, while
+// the public proxies forward anywhere — allow-listing an open proxy defeats the
+// point of connect-src.
 const quotesProxy = process.env.VITE_QUOTES_PROXY
 function cspQuotesProxy() {
+  const origins = quotesProxy ? [new URL(quotesProxy).origin] : proxyOrigins(FALLBACK_PROXIES)
   return {
     name: 'csp-quotes-proxy',
     transformIndexHtml(html: string) {
-      if (!quotesProxy) return html
-      return html.replace('https://corsproxy.io', new URL(quotesProxy).origin)
+      return html.replaceAll('__QUOTE_PROXIES__', origins.join(' '))
     },
   }
 }

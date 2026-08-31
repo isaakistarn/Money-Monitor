@@ -2,7 +2,7 @@
  * Money Monitor — self-hosted quote proxy (Cloudflare Worker).
  *
  * Yahoo Finance doesn't send CORS headers, so the browser needs a proxy. This
- * worker replaces the public corsproxy.io with one that only YOU control and
+ * worker replaces the public proxy chain with one that only YOU control and
  * that only forwards to Yahoo — unlike an open proxy, it can't be used by
  * injected code as a data-exfiltration route, and no third party sees your
  * tickers or can rewrite your prices.
@@ -11,11 +11,12 @@
  *   1. https://dash.cloudflare.com → Workers & Pages → Create → Worker.
  *   2. Paste this file, adjust ALLOWED_ORIGINS if your app URL differs, Deploy.
  *   3. Note the worker URL, e.g. https://money-monitor-quotes.<you>.workers.dev
- *   4. Point the app at it (the format matches corsproxy.io's `?url=`):
+ *   4. Point the app at it (a URL prefix the encoded target is appended to):
  *      - GitHub Pages build: repo Settings → Secrets and variables → Actions →
  *        Variables → New: VITE_QUOTES_PROXY = https://<worker-url>/?url=
  *      - Local dev: add the same line to .env.local
- *   5. Push / rebuild. The build swaps corsproxy.io out of the CSP for you.
+ *   5. Push / rebuild. The build narrows the CSP to this worker for you, and
+ *      the app stops consulting the public proxies entirely.
  */
 
 // Only these upstream hosts are ever fetched. Everything else → 403.

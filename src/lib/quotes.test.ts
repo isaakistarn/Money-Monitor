@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { metaToQuote, yahooSymbol, marketOf, cleanSeries, alignSeries, parseSearch, parseNews, parseTrending } from './quotes'
+import { afterEach, beforeEach, vi } from 'vitest'
+import { metaToQuote, yahooSymbol, marketOf, cleanSeries, alignSeries, parseSearch, parseNews, parseTrending, fetchYahooQuote, RateLimitError } from './quotes'
+import { FALLBACK_PROXIES } from './proxies'
 
 describe('yahoo chart meta → quote', () => {
   it('computes price, day change and percent from meta', () => {
@@ -180,5 +182,74 @@ describe('alignSeries', () => {
 
   it('all-null yields empty arrays', () => {
     expect(alignSeries([null, null], [1, 2])).toEqual({ closes: [], times: [] })
+  })
+})
+
+/* --------------------------- Proxy failover ---------------------------- */
+
+/**
+ * A fetch stub that answers per proxy prefix, recording the order tried.
+ * `responder` receives the attempt index, because the module sticks with the
+ * last proxy that worked — so which entry is tried first varies between tests
+ * and only the ORDER of attempts is stable.
+ */
+function stubProxies(responder: (attempt: number) => Response | Promise<Response>) {
+  const tried: string[] = []
+  const fetchMock = vi.fn(async (url: string) => {
+    tried.push(FALLBACK_PROXIES.find((p) => String(url).startsWith(p))!)
+    return responder(tried.length - 1)
+  })
+  vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch)
+  return tried
+}
+
+const chartBody = JSON.stringify({
+  chart: { result: [{ meta: { symbol: 'AAPL', regularMarketPrice: 100, previousClose: 100 }, timestamp: [], indicators: { quote: [{ close: [] }] } }] },
+})
+const json = (body: string, status = 200) =>
+  new Response(body, { status, headers: { 'content-type': 'application/json' } })
+
+describe('proxy failover', () => {
+  // The throttle sleeps 250ms between proxy attempts; fake timers would need
+  // manual advancing, so instead keep the chains short and let them run.
+  beforeEach(() => vi.unstubAllGlobals())
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('skips a proxy that demands an API key (the HTTP 401 that broke prices)', async () => {
+    const tried = stubProxies((n) => (n === 0 ? json('{"error":"A valid API key is required."}', 401) : json(chartBody)))
+    const q = await fetchYahooQuote('AAPL')
+    expect(q.price).toBe(100)
+    expect(tried).toHaveLength(2)
+  })
+
+  it('skips a proxy whose error envelope arrives with HTTP 200', async () => {
+    const tried = stubProxies((n) => (n === 0 ? json('{"error":"A valid API key is required."}') : json(chartBody)))
+    await expect(fetchYahooQuote('AAPL')).resolves.toMatchObject({ price: 100 })
+    expect(tried).toHaveLength(2)
+  })
+
+  it('skips a proxy that returns an HTML error page', async () => {
+    const tried = stubProxies((n) => (n === 0 ? new Response('<html>502</html>', { status: 200 }) : json(chartBody)))
+    await expect(fetchYahooQuote('AAPL')).resolves.toMatchObject({ price: 100 })
+    expect(tried).toHaveLength(2)
+  })
+
+  it('reports rate limiting only once every proxy has throttled', async () => {
+    const tried = stubProxies(() => json('{}', 429))
+    await expect(fetchYahooQuote('AAPL')).rejects.toBeInstanceOf(RateLimitError)
+    expect(tried).toHaveLength(FALLBACK_PROXIES.length) // every one was given a chance
+  })
+
+  it('surfaces a plain error when every proxy is down', async () => {
+    stubProxies(() => json('{}', 503))
+    const err = await fetchYahooQuote('AAPL').catch((e) => e)
+    expect(err).toBeInstanceOf(Error)
+    expect(err).not.toBeInstanceOf(RateLimitError)
+    expect(String(err.message)).toMatch(/every proxy failed/i)
+  })
+
+  it("passes Yahoo's own symbol error through instead of blaming the proxy", async () => {
+    stubProxies(() => json(JSON.stringify({ chart: { error: { description: 'No data found, symbol may be delisted' } } }), 404))
+    await expect(fetchYahooQuote('NOPE')).rejects.toThrow(/delisted/)
   })
 })

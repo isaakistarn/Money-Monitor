@@ -52,4 +52,5 @@ export const IconShield = (p: P) => (<svg {...base} {...p}><path d="M12 3 5 6v6c
 export const IconCloud = (p: P) => (<svg {...base} {...p}><path d="M7 18a4 4 0 0 1-.5-7.97 5.5 5.5 0 0 1 10.6-1.06A3.75 3.75 0 0 1 17.5 18H7Z" /></svg>)
 export const IconRefresh = (p: P) => (<svg {...base} {...p}><path d="M20 11a8 8 0 0 0-14-4.5L4 8" /><path d="M4 4v4h4" /><path d="M4 13a8 8 0 0 0 14 4.5L20 16" /><path d="M20 20v-4h-4" /></svg>)
 export const IconLogout = (p: P) => (<svg {...base} {...p}><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="M16 17l5-5-5-5" /><path d="M21 12H9" /></svg>)
+export const IconTag = (p: P) => (<svg {...base} {...p}><path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9-9-9Z" /><circle cx="7.5" cy="7.5" r="1.4" /></svg>)
 export const IconTrend = (p: P) => (<svg {...base} {...p}><path d="M3 17l6-6 4 4 8-8" /><path d="M14 7h7v7" /></svg>)

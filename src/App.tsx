@@ -20,6 +20,7 @@ import { Budgets } from '@/pages/Budgets'
 import { Accounts } from '@/pages/Accounts'
 import { Analytics } from '@/pages/Analytics'
 import { Markets } from '@/pages/Markets'
+import { Sales } from '@/pages/Sales'
 import { Settings } from '@/pages/Settings'
 
 function RootLayout() {
@@ -60,6 +61,7 @@ const router = createHashRouter([
       { path: 'budgets', element: <Budgets /> },
       { path: 'accounts', element: <Accounts /> },
       { path: 'watchlist', element: <Markets /> },
+      { path: 'sales', element: <Sales /> },
       { path: 'analytics', element: <Analytics /> },
       { path: 'settings', element: <Settings /> },
       { path: '*', element: <Dashboard /> },

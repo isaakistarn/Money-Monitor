@@ -35,6 +35,7 @@ const TABLE_OF = {
   paySplits: db.paySplits,
   holdings: db.holdings,
   watchlist: db.watchlist,
+  sales: db.sales,
 } as unknown as Record<SyncedTable, Table<Row, string>>
 
 // Membership check via a Set (never a bare object lookup, which would walk the

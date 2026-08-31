@@ -1,4 +1,4 @@
-import { IconHome, IconList, IconTarget, IconWallet, IconChart, IconTrend } from '@/components/ui/icons'
+import { IconHome, IconList, IconTarget, IconWallet, IconChart, IconTrend, IconTag } from '@/components/ui/icons'
 import type { ComponentType, SVGProps } from 'react'
 
 export interface NavItem {
@@ -14,6 +14,7 @@ export const NAV_ITEMS: NavItem[] = [
   { to: '/transactions', label: 'Transactions', short: 'Activity', Icon: IconList },
   { to: '/budgets', label: 'Budgets', Icon: IconTarget },
   { to: '/accounts', label: 'Accounts', Icon: IconWallet },
+  { to: '/sales', label: 'Sales', Icon: IconTag },
   { to: '/watchlist', label: 'Markets', short: 'Markets', Icon: IconTrend },
   { to: '/analytics', label: 'Analytics', short: 'Charts', Icon: IconChart },
 ]

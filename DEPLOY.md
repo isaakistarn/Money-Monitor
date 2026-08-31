@@ -125,11 +125,15 @@ change, on app focus, and every minute. There's also a **Sync now** button.
 
 ## Part 3 — Self-hosted quote proxy (recommended)
 
-Live prices come from Yahoo Finance through a CORS proxy. Out of the box that's
-the public **corsproxy.io** — which works, but it's an *open* proxy: it sees
-every ticker you follow, could tamper with prices, and weakens the app's
-Content Security Policy (details in [`SECURITY.md`](./SECURITY.md)). Replacing
-it with your own takes ~5 minutes and is free:
+Live prices come from Yahoo Finance through a CORS proxy. Out of the box the app
+fails over across a short list of free public proxies
+([`src/lib/proxies.ts`](./src/lib/proxies.ts)) — necessary because they come and
+go without notice (corsproxy.io, the original single default, started demanding
+an API key and answering HTTP 401, which took live prices down until the app
+learned to fail over). They work, but they are *open* proxies: they see every
+ticker you follow, could tamper with prices, and weaken the app's Content
+Security Policy (details in [`SECURITY.md`](./SECURITY.md)). Replacing them with
+your own takes ~5 minutes and is free:
 
 1. Sign in at [dash.cloudflare.com](https://dash.cloudflare.com) →
    **Workers & Pages → Create → Worker**.
@@ -142,7 +146,8 @@ it with your own takes ~5 minutes and is free:
    - Name: `VITE_QUOTES_PROXY`
    - Value: `https://money-monitor-quotes.<you>.workers.dev/?url=`
 5. Re-run the deploy workflow (or push anything). The build now routes quotes
-   through your worker **and** swaps corsproxy.io out of the CSP automatically.
+   through your worker **only** — the public proxy chain is skipped — **and**
+   narrows the CSP to your worker's origin automatically.
 
 For local dev, add the same `VITE_QUOTES_PROXY=...` line to `.env.local`.
 
